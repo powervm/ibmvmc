@@ -1,0 +1,155 @@
+//standard includes
+
+#include <iostream>
+#include <errno.h>
+#include <stdio.h>
+
+#include <stdlib.h>
+#include <fstream>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+
+// Other includes
+#ifndef _HVHMCLESSCMD_H
+    #include "HvHmcLessCmd.H"
+#endif
+
+using namespace std;
+
+/** Return zero on success */
+int writeMessage(int fd, HvHmcLessCmd *outbound)
+{
+    int rc;
+    do {
+        rc = write(fd ,(char*)outbound , outbound->getLength());
+    } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
+
+    if (rc == -1) {
+        cout << "write failed errno: " << errno << "  " << perror << endl;
+        return -1;
+    } else if (rc != outbound->getLength()) {
+        cout << "Write failed msglen " << rc << " != " << outbound->getLength() << endl;
+        return -2;
+    }
+    return 0;
+}
+
+int readMessage(int fd, HvHmcLessCmd *inbound)
+{
+    int rc;
+    do {
+        rc = read (fd , (char*)inbound, sizeof(*inbound) );
+    } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
+
+    if (rc == -1) {
+        cout << "Read failed errno" << errno<< "  " << perror << endl;
+        return -1;
+    } else if (rc != inbound->getLength()) {
+        cout << "Read failed msglen " << rc << " != " << inbound->getLength() << endl;
+        return -2;
+    }
+    return 0;
+}
+
+void checkBuffers(int fd)
+{
+    uint32 vmc_buffer_count[2];
+    int rc = ioctl(fd, 2, vmc_buffer_count);
+    if (rc == -1) {
+        cout << "VMC Buffers ioctl failed errno" << errno << "  " << perror << endl;
+    } else {
+        cout << "VMC Buffers: valid = " << vmc_buffer_count[0] << " free = " << vmc_buffer_count[1] << endl;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    char* devname = "/dev/ibmvmc" ;// put something here
+    int loopcount = 3;
+    int echoDataLen = 6;
+    int fd;
+    int rc;
+    HvHmcLessCmd* inbound;
+    HvHmcLessCmd* outbound;
+    char hmc_id[32] = "hmcless id"; 
+
+    cout << "calling open" << endl;
+
+    do {
+        fd = open (devname , O_RDWR);
+        cout << "open called: fd=" << fd << endl;
+    } while ((fd == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
+
+    if (fd == -1) {
+        cout << "error opening file   " << errno << "  " << perror  << endl ;
+        exit (1);
+    }
+    cout << "open complete" << endl;
+
+    do {
+        rc = ioctl(fd, 1, hmc_id);
+        cout << "ioctl called: rc=" << rc << endl;
+    } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
+
+    if (rc == -1) {
+        cout << "error opening vmc for my hmc_id " << errno << "  " << perror  << endl ;
+        exit (2);
+    }
+
+    inbound = new HvHmcLessCmd(HvHmcLessCmd::CatHmcRtr);
+    outbound = new HvHmcLessCmd(HvHmcLessCmd::CatHmcRtr);
+    outbound->setOpcode(HvHmcLessCmd::ExchangeOps);
+    outbound->setParmsByte(1,1);
+    outbound->setDataLen(6);
+
+    cout << "sending the open command" << endl;
+    outbound->dumpHex();
+
+    if (writeMessage(fd,outbound) != 0) {
+        exit(3);
+    }
+
+
+    if (readMessage(fd,inbound) != 0) {
+        exit(4);
+    }
+
+    cout << "got the open response" << endl;
+    outbound->dumpHex();
+
+    cout << "cmd router session is now open";
+
+    outbound->setOpcode(HvHmcLessCmd::cmdRtrEcho);
+    for (int count=0 ; count <loopcount ; count++) {
+        outbound->setParmsByte(count, count+1);
+        outbound->setDataLen(count+1); // increase the parm length for each msg
+        if (writeMessage(fd,outbound) != 0) {
+            exit(5);
+        }
+
+
+        if (readMessage(fd,inbound) != 0) {
+            exit(4);
+        }
+
+    }
+
+    outbound->setDataLen(0);
+    outbound->setOpcode(HvHmcLessCmd::Close);
+
+    if (writeMessage(fd,outbound) != 0) {
+        exit(3);
+    }
+
+    if (readMessage(fd,inbound) != 0) {
+        exit(4);
+    }
+
+    if (close (fd) == -1) {
+        cout << "error closing file   " << errno << "  " << perror << "\n" ;
+        exit (1);
+    }
+
+
+}
