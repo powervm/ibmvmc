@@ -1,0 +1,9 @@
+# Ignore any temp files
+.*.sw?
+*.orig
+*.CKP
+.*\~
+\#*#
+
+# Ignore binary
+*.o
