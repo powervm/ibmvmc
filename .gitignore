@@ -7,3 +7,6 @@
 
 # Ignore binary
 *.o
+
+# Ignore IDE related items
+/.project
