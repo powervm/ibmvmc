@@ -2,12 +2,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdio.h>
 
 int vmc_fd;
 
 // DRENG need to add more EBUSY checking
 
-int vmc_open() {
+int vmc_open()
+{
 	int rc;
 
 	do {
@@ -19,7 +21,8 @@ int vmc_open() {
 	return vmc_fd;
 }
 
-int vmc_send_hmc_id() {
+int vmc_send_hmc_id()
+{
 	char hmc_id[32] = "i am an hmc id";
 	int rc;
 
@@ -28,9 +31,11 @@ int vmc_send_hmc_id() {
 	} while ((rc == -1) && (errno == EBUSY));
 
 	printf("vmc_send_hmc_id: rc = 0x%x\n", rc);
+	return rc;
 }
 
-int vmc_send_msg() {
+int vmc_send_msg()
+{
 	char msg[32] = "this is an hmc msg";
 	int rc;
 	int c = 0;
@@ -46,16 +51,22 @@ int vmc_send_msg() {
 	} while ((rc == -1) && (errno == EBUSY));
 
 	printf("vmc_send_msg: complete.\n");
+	return rc;
 }
 
-main () {
+int main(int argc, char **argv)
+{
 	printf("Starting VMC test\n");
+	int rc = -1;
 
 	if(vmc_open() >= 0) {
-		vmc_send_hmc_id();
-		vmc_send_msg();
+		rc = vmc_send_hmc_id();
+		if (!rc) {
+			rc = vmc_send_msg();
+		}
 	} else {
 		printf("vmc open failed: %d\n", errno);
 	}
+	return rc;
 }
 
