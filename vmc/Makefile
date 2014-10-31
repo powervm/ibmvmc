@@ -1,4 +1,4 @@
-obj-m := vmc.o
+obj-m := ibmvmc.o
 
 KDIR  := /lib/modules/$(shell uname -r)/build
 
