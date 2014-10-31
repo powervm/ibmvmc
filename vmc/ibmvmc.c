@@ -11,8 +11,6 @@
  *      2 of the License, or (at your option) any later version.
  */
 
-#include <linux/utsname.h>
-#include <linux/config.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/major.h>
@@ -23,17 +21,17 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/workqueue.h>
-#include <linux/genhd.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/percpu.h>
-#include <linux/devfs_fs_kernel.h>
 
-#include <asm/processor.h>
+#include <asm/byteorder.h>
 #include <asm/uaccess.h>
 #include <asm/irq.h>
 #include <asm/io.h>
 #include <asm/vio.h>
+
+#include "ibmvmc.h"
 
 #define IBMVMC_DRIVER_VERSION "1.0"
 
@@ -41,8 +39,6 @@ MODULE_DESCRIPTION("IBM VMC");
 MODULE_AUTHOR("Steven Royer <seroyer@us.ibm.com>");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(IBMVMC_DRIVER_VERSION);
-
-#define BU_MODE
 
 #define err(format, arg...) printk(KERN_ERR __FILE__ ": " format , ## arg)
 #define info(format, arg...) printk(KERN_INFO __FILE__ ": " format  , ## arg)
@@ -54,67 +50,6 @@ MODULE_VERSION(IBMVMC_DRIVER_VERSION);
 static DECLARE_WAIT_QUEUE_HEAD(ibmvmc_read_wait);
 
 char ibmvmc_driver_name[] = "ibmvmc";
-#define IBMVMC_VERSION    0x0101
-
-#define MAX_BUF_POOL_SIZE 64
-#define MAX_HMC_INDEX     2
-#define MAX_MTU           4*4096
-#define HMC_ID_LEN        32
-
-#define VMC_INVALID_BUFFER_ID 0xFFFF
-
-#define VMC_IOCTL_SETHMCID 1
-#define VMC_IOCTL_DEBUG    2
-
-#define VMC_MSG_CAP          0x01
-#define VMC_MSG_CAP_RESP     0x81
-#define VMC_MSG_OPEN         0x02
-#define VMC_MSG_OPEN_RESP    0x82
-#define VMC_MSG_CLOSE        0x03
-#define VMC_MSG_CLOSE_RESP   0x83
-#define VMC_MSG_ADD_BUF      0x04
-#define VMC_MSG_ADD_BUF_RESP 0x84
-#define VMC_MSG_REM_BUF      0x05
-#define VMC_MSG_REM_BUF_RESP 0x85
-#define VMC_MSG_SIGNAL       0x06
-
-#define VMC_MSG_SUCCESS 0
-#define VMC_MSG_INVALID_HMC_INDEX 1
-#define VMC_MSG_INVALID_BUFFER_ID 2
-#define VMC_MSG_CLOSED_HMC        3
-#define VMC_MSG_INTERFACE_FAILURE 4
-#define VMC_MSG_NO_BUFFER         5
-
-#define VMC_BUF_OWNER_ALPHA 0
-#define VMC_BUF_OWNER_HV    1
-
-enum ibmvmc_states {
-	ibmvmc_state_initial =      0,
-	ibmvmc_state_crqinit =      1,
-	ibmvmc_state_capabilities = 2,
-	ibmvmc_state_ready        = 3,
-	ibmvmc_state_failed       = 4,
-};
-
-enum ibmhmc_states {
-	ibmhmc_state_free =    0, /* HMC connection not established                 */
-	ibmhmc_state_initial = 1, /* HMC connection established, due to open() call */
-	ibmhmc_state_opening = 2, /* open msg sent to HV, due to ioctl(1) call      */
-	ibmhmc_state_ready   = 3, /* HMC connection ready, open resp msg from HV    */
-	ibmhmc_state_failed  = 4, /* HMC connection failure                         */
-};
-
-struct ibmvmc_buffer {
-	unsigned char valid;    /* 1 when DMA storage allocated to buffer          */
-	unsigned char free;     /* 1 when buffer available for the Alpha Partition */
-	unsigned char owner;
-	unsigned short id;
-	unsigned long size;
-	unsigned long msg_len;
-	dma_addr_t dma_addr_local;
-	dma_addr_t dma_addr_remote;
-	void *real_addr_local;
-};
 
 struct ibmvmc {
 	u32 state;
@@ -139,45 +74,67 @@ struct ibmvmc_hmc {
 	int queue_head, queue_tail;
 } hmcs[MAX_HMC_INDEX];
 
-struct crq_msg_ibmvmc_admin {
-	u8 valid;     /* RPA Defined           */
-	u8 type;      /* ibmvmc msg type       */
-	u8 status;    /* Response msg status   */
-	u8 rsvd[2];
-	u8 max_hmc;
-	u16 pool_size;
-	u32 max_mtu;
-	u16 crq_size;
-	u16 version;
-};
-
-struct crq_msg_ibmvmc {
-	unsigned char valid;     /* RPA Defined           */
-	unsigned char type;      /* ibmvmc msg type       */
-	unsigned char status;    /* Response msg status   */
-	union {
-		unsigned char rsvd;  /* Reserved              */
-		unsigned char owner;
-	} var1;
-	unsigned char hmc_session;
-	unsigned char hmc_index;
-	union {
-		unsigned short rsvd;
-		unsigned short buffer_id;
-	} var2;
-	unsigned int rsvd;
-	union {
-		unsigned int rsvd;
-		unsigned int lioba;
-		unsigned int msg_len;
-	} var3;
-};
-
-extern long h_copy_rdma(long length,
+static inline long h_copy_rdma(long length,
 			unsigned long sliobn, unsigned long slioba,
-			unsigned long dliobn, unsigned long dlioba);
+			unsigned long dliobn, unsigned long dlioba)
+{
+	long rc = 0;
+	rc = plpar_hcall_norets(H_COPY_RDMA, length,
+			sliobn, slioba, dliobn, dlioba);
+	return rc;
+}
+
 
 struct crq_server_adapter ibmvmc_adapter;
+
+// TODO stubs
+/* routines for managing a command/response queue */
+int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
+{
+	// DMA map
+	// H_REG_CRQ
+	return 0;
+}
+
+void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
+{
+	// H_FREE_CRQ
+	// DMA unmap
+}
+
+void ibmvmc_reset_crq_queue(struct crq_server_adapter *adapter)
+{
+	// H_FREE_CRQ
+	// H_REG_CRQ
+}
+
+void ibmvmc_handle_crq(struct crq_msg_ibmvmc *crq,
+		       struct crq_server_adapter *adapter)
+{
+}
+
+int ibmvmc_send_crq(struct crq_server_adapter *adapter,
+		    u64 word1, u64 word2)
+{
+	// H_SEND_CRQ
+	return 0;
+}
+
+// TODO replace vio_*_consistent
+void *vio_alloc_consistent(struct vio_dev *dev, size_t size,
+			dma_addr_t *dma_handle)
+{
+	// allocate memory
+	// DMA map
+	return NULL;
+}
+
+void vio_free_consistent(struct vio_dev *dev, size_t size, void *vaddr,
+			dma_addr_t dma_handle)
+{
+	// DMA unmap
+	// deallocate memory
+}
 
 #if 0
 static struct ibmvmc_buffer * get_free_channel_buffer(void)
@@ -391,8 +348,8 @@ static int send_open(struct ibmvmc_buffer *buffer,
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
-	crq_send(adapter, *((unsigned long *)&crq_msg),
-		 *(((unsigned long *)&crq_msg)+1));
+	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
+			*(((unsigned long *)&crq_msg)+1));
 
 	return rc;
 }
@@ -420,8 +377,8 @@ static int send_close(struct ibmvmc_hmc *hmc)
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
-	crq_send(adapter, *((unsigned long *)&crq_msg),
-		 *(((unsigned long *)&crq_msg)+1));
+	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
+		 	*(((unsigned long *)&crq_msg)+1));
 
 	return rc;
 }
@@ -440,10 +397,10 @@ int ibmvmc_send_capabilities(struct crq_server_adapter *adapter)
 	crq_msg.max_mtu = MAX_MTU;
 	crq_msg.pool_size = MAX_BUF_POOL_SIZE;
 	crq_msg.crq_size = adapter->queue.size;
-	crq_msg.version = IBMVMC_VERSION;
+	crq_msg.version = IBMVMC_PROTOCOL_VERSION;
 
-	crq_send(adapter, *((unsigned long *)&crq_msg),
-		 *(((unsigned long *)&crq_msg)+1));
+	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
+		 	*(((unsigned long *)&crq_msg)+1));
 
 	ibmvmc.state = ibmvmc_state_capabilities;
 
@@ -466,8 +423,8 @@ int ibmvmc_send_add_buffer_resp(struct crq_server_adapter *adapter,
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
-	crq_send(adapter,
-		 *((unsigned long *)&crq_msg), *(((unsigned long *)&crq_msg)+1));
+	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
+			*(((unsigned long *)&crq_msg)+1));
 
 	return 0;
 }
@@ -488,8 +445,8 @@ int ibmvmc_send_rem_buffer_resp(struct crq_server_adapter *adapter,
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
-	crq_send(adapter,
-		 *((unsigned long *)&crq_msg), *(((unsigned long *)&crq_msg)+1));
+	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
+			*(((unsigned long *)&crq_msg)+1));
 
 	return 0;
 }
@@ -525,8 +482,8 @@ static int send_msg(struct crq_server_adapter *adapter,
 	     *(((unsigned long *)&crq_msg)+1));
 
 	buffer->owner = VMC_BUF_OWNER_HV;
-	crq_send(adapter, *((unsigned long *)&crq_msg),
-		 *(((unsigned long *)&crq_msg)+1));
+	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
+		 	*(((unsigned long *)&crq_msg)+1));
 
 	return rc;
 }
@@ -535,7 +492,7 @@ static int ibmvmc_open(struct inode *inode, struct file *file)
 {
 	int retval = 0;
 	struct ibmvmc_hmc *hmc;
-	unsigned int valid, free;
+	unsigned int valid = 0, free = 0;
 
 	info("vmc_open:  inode = 0x%lx, file = 0x%lx, state = 0x%x\n",
 	     (unsigned long)inode, (unsigned long)file, ibmvmc.state);
@@ -796,20 +753,20 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	return (ssize_t)(ret);
 }
 
-static int ibmvmc_ioctl(struct inode *inode, struct file *file,
+static long ibmvmc_ioctl(struct file *file,
 	  unsigned int cmd, unsigned long arg)
 {
 	struct ibmvmc_buffer *buffer;
 	size_t bytes;
 	struct ibmvmc_hmc *hmc;
-	int rc = 0;
+	long rc = 0;
 	int cnt_buffers[2], n;
 
-	info("ioctl: inode=0x%lx, file=0x%lx, cmd=0x%x, arg=0x%lx, hmc=0x%lx\n",
-	     (unsigned long) inode, (unsigned long) file, cmd,
+	hmc = file->private_data;
+	info("ioctl: file=0x%lx, cmd=0x%x, arg=0x%lx, hmc=0x%lx\n",
+	     (unsigned long) file, cmd,
 	     arg, (unsigned long) hmc);
 
-	hmc = file->private_data;
 	if(!hmc) {
 		info("ioctl: no hmc\n");
 		return -EIO;
@@ -867,7 +824,7 @@ struct file_operations ibmvmc_fops = {
 	.read		= ibmvmc_read,
 	.write		= ibmvmc_write,
 	.poll		= ibmvmc_poll,
-	.ioctl		= ibmvmc_ioctl,
+	.compat_ioctl	= ibmvmc_ioctl,
 	.open           = ibmvmc_open,
 	.release        = ibmvmc_close,
 };
@@ -1092,9 +1049,9 @@ void ibmvmc_process_capabilities(struct crq_msg *crqp)
 {
 	struct crq_msg_ibmvmc_admin *crq = (struct crq_msg_ibmvmc_admin *)crqp;
 
-	if((crq->version >> 8) != (IBMVMC_VERSION >> 8)) {
+	if((crq->version >> 8) != (IBMVMC_PROTOCOL_VERSION >> 8)) {
 		err("ibmvmc: init failed, incompatible versions (0x%x 0x%x)\n",
-		    crq->version, IBMVMC_VERSION);
+		    crq->version, IBMVMC_PROTOCOL_VERSION);
 		ibmvmc.state = ibmvmc_state_failed;
 		return;
 	}
@@ -1260,7 +1217,7 @@ void ibmvmc_crq_handle(struct crq_server_adapter *adapter, struct crq_msg *crq)
 			info("CRQ recv: CRQ init msg - state 0x%x\n", ibmvmc.state);
 			if(ibmvmc.state == ibmvmc_state_crqinit) {
 				/* Send back a response */
-				if (crq_send(adapter, 0xC002000000000000, 0) == 0) {
+				if (ibmvmc_send_crq(adapter, 0xC002000000000000, 0) == 0) {
 					ibmvmc_send_capabilities(adapter);
 				} else {
 					err("Unable to send init rsp\n");
@@ -1294,24 +1251,24 @@ void ibmvmc_crq_handle(struct crq_server_adapter *adapter, struct crq_msg *crq)
 	}
 }
 
+// TODO this is a sub.  CRQ driver task.
+static void crq_task(struct work_struct *work)
+{
+}
 
 static int ibmvmc_probe(struct vio_dev *dev, const struct vio_device_id *id)
 {
 	struct crq_server_adapter *adapter = &ibmvmc_adapter;
 	int rc;
-#ifndef BU_MODE
 	unsigned int *dma_window;
 	unsigned int dma_window_property_size;
-#endif
 
 	info("Probe for UA 0x%x\n", dev->unit_address);
 	memset(adapter, 0, sizeof(*adapter));
 	adapter->dev = dev;
-	dev->driver_data = adapter;
 	sprintf(adapter->name,"%s:%x", ibmvmc_driver_name, dev->unit_address);
-	adapter->lock = SPIN_LOCK_UNLOCKED;
+	spin_lock_init(&adapter->lock);
 
-#ifndef BU_MODE
 	dma_window =
 		(unsigned int *)vio_get_attribute(dev, "ibm,my-dma-window",
 						  &dma_window_property_size);
@@ -1321,15 +1278,11 @@ static int ibmvmc_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	adapter->liobn = dma_window[0];
 	adapter->riobn = dma_window[3];
-#else
-	adapter->liobn = 0x19000002;
-	adapter->riobn = 0x13000002;
-#endif
 
 	adapter->queue.crq_handler = ibmvmc_crq_handle;
-	INIT_WORK(&adapter->crq_work, crq_task, adapter);
+	INIT_WORK(&adapter->crq_work, crq_task);
 
-	rc = crq_initialize(adapter);
+	rc = ibmvmc_init_crq_queue(adapter);
 	if (rc != 0) {
 		err("Error initializing CRQ.  rc = 0x%x\n", rc);
 		ibmvmc.state = ibmvmc_state_failed;
@@ -1353,7 +1306,7 @@ static int ibmvmc_probe(struct vio_dev *dev, const struct vio_device_id *id)
         }
 
         adapter->queue.cur = 0;
-        adapter->queue.lock = SPIN_LOCK_UNLOCKED;
+        spin_lock_init(&adapter->queue.lock);
 
 	return 0;
 }
@@ -1365,9 +1318,9 @@ static int ibmvmc_remove(struct vio_dev *dev)
 	return 0;
 }
 
-static struct vio_device_id ibmvmc_device_table[] __devinitdata= {
+static struct vio_device_id ibmvmc_device_table[] = {
 	{ "vmc", "IBM,vmc" },
-	{ 0,}
+	{ "", "" }
 };
 
 MODULE_DEVICE_TABLE(vio, ibmvmc_device_table);
@@ -1384,7 +1337,7 @@ static int __init ibmvmc_module_init(void)
 	int rc, i, j;
 
 	info("ibmvmc version %d.%d mod_init\n",
-	     IBMVMC_VERSION >> 8, IBMVMC_VERSION & 0xFF);
+	     IBMVMC_PROTOCOL_VERSION >> 8, IBMVMC_PROTOCOL_VERSION & 0xFF);
 
 	rc = vio_register_driver(&ibmvmc_driver);
 
@@ -1392,24 +1345,25 @@ static int __init ibmvmc_module_init(void)
 		warn("rc %d from vio_register_driver\n",rc);
 	}
 
-        if (register_chrdev (60, "ibmvmc", &vmc_fops)) {
+        if (register_chrdev (60, "ibmvmc", &ibmvmc_fops)) {
                 printk (KERN_WARNING "ibmvmc" ": unable to get major %d\n", 60);
                 return -EIO;
         }
-	devfs_mk_cdev(MKDEV(60, 0),
-                      S_IFCHR | S_IRUSR | S_IWUSR, "ibmvmc");
+	// TODO
+//	devfs_mk_cdev(MKDEV(60, 0),
+//                      S_IFCHR | S_IRUSR | S_IWUSR, "ibmvmc");
 
 	/* Initialize data structures */
 	memset(hmcs, 0, sizeof(struct ibmvmc_hmc) * MAX_HMC_INDEX);
 	for(i=0; i<MAX_HMC_INDEX; i++) {
-		hmcs[i].lock = SPIN_LOCK_UNLOCKED;
+		spin_lock_init(&hmcs[i].lock);
 		hmcs[i].state = ibmhmc_state_free;
 		for(j=0; j<MAX_BUF_POOL_SIZE; j++) {
 			hmcs[i].queue_outbound_msgs[j] = VMC_INVALID_BUFFER_ID;
 		}
 	}
 
-	ibmvmc.lock = SPIN_LOCK_UNLOCKED;
+	spin_lock_init(&ibmvmc.lock);
 
 	/*
 	 * Initialize some reasonable values.  Might be negotiated smaller values
@@ -1430,5 +1384,4 @@ static void __exit ibmvmc_module_exit(void)
 
 module_init(ibmvmc_module_init);
 module_exit(ibmvmc_module_exit);
-
 
