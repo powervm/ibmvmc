@@ -79,8 +79,12 @@ static inline long h_copy_rdma(long length,
 			unsigned long dliobn, unsigned long dlioba)
 {
 	long rc = 0;
-	rc = plpar_hcall_norets(H_COPY_RDMA, length,
-			sliobn, slioba, dliobn, dlioba);
+	rc = plpar_hcall_norets(H_COPY_RDMA,
+			cpu_to_be64(length),
+			cpu_to_be64(sliobn),
+			cpu_to_be64(slioba),
+			cpu_to_be64(dliobn),
+			cpu_to_be64(dlioba));
 	return rc;
 }
 
@@ -344,7 +348,7 @@ static int send_open(struct ibmvmc_buffer *buffer,
 	crq_msg.var1.rsvd = 0;
 	crq_msg.hmc_session = hmc->session;
 	crq_msg.hmc_index = hmc->index;
-	crq_msg.var2.buffer_id = buffer->id;
+	crq_msg.var2.buffer_id = cpu_to_be16(buffer->id);
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
@@ -394,10 +398,10 @@ int ibmvmc_send_capabilities(struct crq_server_adapter *adapter)
 	crq_msg.rsvd[0] = 0;
 	crq_msg.rsvd[1] = 0;
 	crq_msg.max_hmc = MAX_HMC_INDEX;
-	crq_msg.max_mtu = MAX_MTU;
-	crq_msg.pool_size = MAX_BUF_POOL_SIZE;
-	crq_msg.crq_size = adapter->queue.size;
-	crq_msg.version = IBMVMC_PROTOCOL_VERSION;
+	crq_msg.max_mtu = cpu_to_be32(MAX_MTU);
+	crq_msg.pool_size = cpu_to_be16(MAX_BUF_POOL_SIZE);
+	crq_msg.crq_size = cpu_to_be16(adapter->queue.size);
+	crq_msg.version = cpu_to_be16(IBMVMC_PROTOCOL_VERSION);
 
 	ibmvmc_send_crq(adapter, *((unsigned long *)&crq_msg),
 		 	*(((unsigned long *)&crq_msg)+1));
@@ -419,7 +423,7 @@ int ibmvmc_send_add_buffer_resp(struct crq_server_adapter *adapter,
 	crq_msg.var1.rsvd = 0;
 	crq_msg.hmc_session = hmc_session;
 	crq_msg.hmc_index = hmc_index;
-	crq_msg.var2.buffer_id = buffer_id;
+	crq_msg.var2.buffer_id = cpu_to_be16(buffer_id);
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
@@ -441,7 +445,7 @@ int ibmvmc_send_rem_buffer_resp(struct crq_server_adapter *adapter,
 	crq_msg.var1.rsvd = 0;
 	crq_msg.hmc_session = hmc_session;
 	crq_msg.hmc_index = hmc_index;
-	crq_msg.var2.buffer_id = buffer_id;
+	crq_msg.var2.buffer_id = cpu_to_be16(buffer_id);
 	crq_msg.rsvd = 0;
 	crq_msg.var3.rsvd = 0;
 
@@ -475,8 +479,8 @@ static int send_msg(struct crq_server_adapter *adapter,
 	crq_msg.var1.rsvd = 0;
 	crq_msg.hmc_session = hmc->session;
 	crq_msg.hmc_index = hmc->index;
-	crq_msg.var2.buffer_id = buffer->id;
-	crq_msg.var3.msg_len = msg_len;
+	crq_msg.var2.buffer_id = cpu_to_be16(buffer->id);
+	crq_msg.var3.msg_len = cpu_to_be32(msg_len);
 	info("CRQ send: msg to HV 0x%lx 0x%lx\n",
 	     *((unsigned long *)&crq_msg),
 	     *(((unsigned long *)&crq_msg)+1));
@@ -626,7 +630,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 		hmc->queue_tail = 0;
 	spin_unlock(&(hmc->lock));
 
-	nbytes = min(nbytes, buffer->msg_len);
+	nbytes = min(nbytes, (size_t)buffer->msg_len);
 	n = copy_to_user((void *)buf, buffer->real_addr_local, nbytes);
 	info("read: copy to user nbytes = 0x%lx.\n", nbytes);
 	return_hmc_buffer(hmc, buffer);
@@ -726,7 +730,7 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	buf = vmc_buffer->real_addr_local;
 
 	while (c > 0) {
-		bytes = min(c, vmc_buffer->size);
+		bytes = min(c, (size_t)vmc_buffer->size);
 
 		bytes -= copy_from_user(buf, p, bytes);
 		if (!bytes) {
@@ -842,7 +846,7 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg *crqp)
 
 	hmc_session = crq->hmc_session;
 	hmc_index = crq->hmc_index;
-	buffer_id = crq->var2.buffer_id;
+	buffer_id = be16_to_cpu(crq->var2.buffer_id);
 
 	if(hmc_index > MAX_HMC_INDEX && hmc_index != 0xFF) {
 		err("add_buffer: invalid hmc_index = 0x%x\n", hmc_index);
@@ -891,7 +895,7 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg *crqp)
 		return -1;
 	}
 
-	buffer->dma_addr_remote = crq->var3.lioba;
+	buffer->dma_addr_remote = be32_to_cpu(crq->var3.lioba);
 	buffer->size = ibmvmc.max_mtu;
 	buffer->owner = crq->var1.owner;
 	buffer->free = 1;
@@ -972,8 +976,8 @@ static int recv_msg(struct crq_server_adapter *adapter, struct crq_msg *crqp)
 
 	hmc_session = crq->hmc_session;
 	hmc_index = crq->hmc_index;
-	buffer_id = crq->var2.buffer_id;
-	msg_len = crq->var3.msg_len;
+	buffer_id = be16_to_cpu(crq->var2.buffer_id);
+	msg_len = be32_to_cpu(crq->var3.msg_len);
 
 	if(hmc_index > ibmvmc.max_hmc_index) {
 		err("recv_msg: invalid hmc_index = 0x%x\n", hmc_index);
@@ -1049,16 +1053,16 @@ void ibmvmc_process_capabilities(struct crq_msg *crqp)
 {
 	struct crq_msg_ibmvmc_admin *crq = (struct crq_msg_ibmvmc_admin *)crqp;
 
-	if((crq->version >> 8) != (IBMVMC_PROTOCOL_VERSION >> 8)) {
+	if((be16_to_cpu(crq->version) >> 8) != (IBMVMC_PROTOCOL_VERSION >> 8)) {
 		err("ibmvmc: init failed, incompatible versions (0x%x 0x%x)\n",
-		    crq->version, IBMVMC_PROTOCOL_VERSION);
+		    be16_to_cpu(crq->version), IBMVMC_PROTOCOL_VERSION);
 		ibmvmc.state = ibmvmc_state_failed;
 		return;
 	}
 
-	ibmvmc.max_mtu = min((u32) MAX_MTU, crq->max_mtu);
+	ibmvmc.max_mtu = min((u32) MAX_MTU, be32_to_cpu(crq->max_mtu));
 	ibmvmc.max_buffer_pool_size = min((u16) MAX_BUF_POOL_SIZE,
-						  crq->pool_size);
+						(u16) be16_to_cpu(crq->pool_size));
 	ibmvmc.max_hmc_index = min((u8) MAX_HMC_INDEX, crq->max_hmc) - 1;
 	ibmvmc.state = ibmvmc_state_ready;
 
@@ -1125,7 +1129,7 @@ void ibmvmc_process_open_resp(struct crq_msg *crqp)
 		return;
 	} else {
 		if(hmcs[hmc_index].state == ibmhmc_state_opening) {
-			buffer_id = crq->var2.buffer_id;
+			buffer_id = be16_to_cpu(crq->var2.buffer_id);
 			if(buffer_id >= ibmvmc.max_buffer_pool_size) {
 				err("process_open_resp: invalid buffer_id = 0x%x\n",
 				    buffer_id);
@@ -1278,6 +1282,7 @@ static int ibmvmc_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	adapter->liobn = dma_window[0];
 	adapter->riobn = dma_window[3];
+	info("Probe: liobn 0x%x, riobn 0x%x\n", adapter->liobn, adapter->riobn);
 
 	adapter->queue.crq_handler = ibmvmc_crq_handle;
 	INIT_WORK(&adapter->crq_work, crq_task);
