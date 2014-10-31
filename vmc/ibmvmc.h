@@ -68,12 +68,12 @@ enum ibmhmc_states {
 };
 
 struct ibmvmc_buffer {
-	unsigned char valid;    /* 1 when DMA storage allocated to buffer          */
-	unsigned char free;     /* 1 when buffer available for the Alpha Partition */
-	unsigned char owner;
-	unsigned short id;
-	unsigned long size;
-	unsigned long msg_len;
+	u8 valid;    /* 1 when DMA storage allocated to buffer          */
+	u8 free;     /* 1 when buffer available for the Alpha Partition */
+	u8 owner;
+	u16 id;
+	u32 size;
+	u32 msg_len;
 	dma_addr_t dma_addr_local;
 	dma_addr_t dma_addr_remote;
 	void *real_addr_local;
@@ -91,31 +91,31 @@ struct crq_msg_ibmvmc_admin {
 	u8 status;    /* Response msg status   */
 	u8 rsvd[2];
 	u8 max_hmc;
-	u16 pool_size;
-	u32 max_mtu;
-	u16 crq_size;
-	u16 version;
+	__be16 pool_size;
+	__be32 max_mtu;
+	__be16 crq_size;
+	__be16 version;
 };
 
 struct crq_msg_ibmvmc {
-	unsigned char valid;     /* RPA Defined           */
-	unsigned char type;      /* ibmvmc msg type       */
-	unsigned char status;    /* Response msg status   */
+	u8 valid;     /* RPA Defined           */
+	u8 type;      /* ibmvmc msg type       */
+	u8 status;    /* Response msg status   */
 	union {
-		unsigned char rsvd;  /* Reserved              */
-		unsigned char owner;
+		u8 rsvd;  /* Reserved              */
+		u8 owner;
 	} var1;
-	unsigned char hmc_session;
-	unsigned char hmc_index;
+	u8 hmc_session;
+	u8 hmc_index;
 	union {
-		unsigned short rsvd;
-		unsigned short buffer_id;
+		__be16 rsvd;
+		__be16 buffer_id;
 	} var2;
-	unsigned int rsvd;
+	__be32 rsvd;
 	union {
-		unsigned int rsvd;
-		unsigned int lioba;
-		unsigned int msg_len;
+		__be32 rsvd;
+		__be32 lioba;
+		__be32 msg_len;
 	} var3;
 };
 
@@ -136,8 +136,8 @@ struct crq_server_adapter
 	struct vio_dev *dev;
 	struct crq_queue queue;
 	spinlock_t lock;
-	unsigned int liobn;
-	unsigned int riobn;
+	u32 liobn;
+	u32 riobn;
 	struct work_struct crq_work;
 };
 
