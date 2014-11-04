@@ -52,15 +52,18 @@
 #define VMC_BUF_OWNER_HV    1
 
 enum ibmvmc_states {
-	ibmvmc_state_initial =      0,
-	ibmvmc_state_crqinit =      1,
-	ibmvmc_state_capabilities = 2,
-	ibmvmc_state_ready        = 3,
-	ibmvmc_state_failed       = 4,
+	ibmvmc_state_initial      = 0,
+	ibmvmc_state_viodrv       = 1,
+	ibmvmc_state_chrdev       = 2,
+	ibmvmc_state_cdev         = 3,
+	ibmvmc_state_crqinit      = 4,
+	ibmvmc_state_capabilities = 5,
+	ibmvmc_state_ready        = 6,
+	ibmvmc_state_failed       = 7,
 };
 
 enum ibmhmc_states {
-	ibmhmc_state_free =    0, /* HMC connection not established                 */
+	ibmhmc_state_free    = 0, /* HMC connection not established                 */
 	ibmhmc_state_initial = 1, /* HMC connection established, due to open() call */
 	ibmhmc_state_opening = 2, /* open msg sent to HV, due to ioctl(1) call      */
 	ibmhmc_state_ready   = 3, /* HMC connection ready, open resp msg from HV    */
