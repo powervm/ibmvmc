@@ -20,6 +20,7 @@
 #include <linux/poll.h>
 #include <linux/init.h>
 #include <linux/fs.h>
+#include <linux/cdev.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -58,6 +59,7 @@ struct ibmvmc {
 	u32 max_hmc_index;
 	struct crq_server_adapter *adapter;
 	spinlock_t lock;
+	struct cdev cdev;
 	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
 } ibmvmc;
 
@@ -90,6 +92,7 @@ static inline long h_copy_rdma(long length,
 
 
 struct crq_server_adapter ibmvmc_adapter;
+dev_t ibmvmc_chrdev;
 
 // TODO stubs
 /* routines for managing a command/response queue */
@@ -825,6 +828,7 @@ static long ibmvmc_ioctl(struct file *file,
 }
 
 struct file_operations ibmvmc_fops = {
+	.owner		= THIS_MODULE,
 	.read		= ibmvmc_read,
 	.write		= ibmvmc_write,
 	.poll		= ibmvmc_poll,
@@ -1324,7 +1328,7 @@ static int ibmvmc_remove(struct vio_dev *dev)
 }
 
 static struct vio_device_id ibmvmc_device_table[] = {
-	{ "vmc", "IBM,vmc" },
+	{ "ibmvmc", "IBM,vmc" },
 	{ "", "" }
 };
 
@@ -1337,26 +1341,44 @@ static struct vio_driver ibmvmc_driver = {
 	.remove      = ibmvmc_remove,
 };
 
+static void ibmvmc_cleanup(void)
+{
+	if (ibmvmc.state >= ibmvmc_state_cdev) {
+		cdev_del(&ibmvmc.cdev);
+	}
+	if (ibmvmc.state >= ibmvmc_state_chrdev) {
+		unregister_chrdev_region(ibmvmc_chrdev, 1);
+	}
+	if (ibmvmc.state >= ibmvmc_state_viodrv) {
+		vio_unregister_driver(&ibmvmc_driver);
+	}
+	ibmvmc.state = ibmvmc_state_initial;
+}
+
 static int __init ibmvmc_module_init(void)
 {
 	int rc, i, j;
 
+	ibmvmc.state = ibmvmc_state_initial;
 	info("ibmvmc version %d.%d mod_init\n",
 	     IBMVMC_PROTOCOL_VERSION >> 8, IBMVMC_PROTOCOL_VERSION & 0xFF);
 
 	rc = vio_register_driver(&ibmvmc_driver);
 
 	if (rc) {
-		warn("rc %d from vio_register_driver\n",rc);
+		warn("rc %d from vio_register_driver\n", rc);
+		goto init_failure;
 	}
+	ibmvmc.state = ibmvmc_state_viodrv;
 
-        if (register_chrdev (60, "ibmvmc", &ibmvmc_fops)) {
-                printk (KERN_WARNING "ibmvmc" ": unable to get major %d\n", 60);
-                return -EIO;
+	/* Dynamically allocate major number */
+        if (alloc_chrdev_region(&ibmvmc_chrdev, 0, 1, ibmvmc_driver_name)) {
+                printk (KERN_WARNING "ibmvmc" ": unable to allocate a dev_t\n");
+                rc = -EIO;
+		goto init_failure;
         }
-	// TODO
-//	devfs_mk_cdev(MKDEV(60, 0),
-//                      S_IFCHR | S_IRUSR | S_IWUSR, "ibmvmc");
+	ibmvmc.state = ibmvmc_state_chrdev;
+	info("ibmvmc node %d,%d\n", MAJOR(ibmvmc_chrdev), MINOR(ibmvmc_chrdev));
 
 	/* Initialize data structures */
 	memset(hmcs, 0, sizeof(struct ibmvmc_hmc) * MAX_HMC_INDEX);
@@ -1378,13 +1400,28 @@ static int __init ibmvmc_module_init(void)
 	ibmvmc.max_buffer_pool_size = MAX_BUF_POOL_SIZE;
 	ibmvmc.max_hmc_index = MAX_HMC_INDEX;
 
+	// All init must be done before cdev_add
+	cdev_init(&ibmvmc.cdev, &ibmvmc_fops);
+	ibmvmc.cdev.owner = THIS_MODULE;
+	ibmvmc.cdev.ops = &ibmvmc_fops;
+	rc = cdev_add(&ibmvmc.cdev, ibmvmc_chrdev, 1);
+	if (rc) {
+		printk(KERN_WARNING "ibmvmc" ": unable to add cdev: %d\n", rc);
+		goto init_failure;
+	}
+	ibmvmc.state = ibmvmc_state_cdev;
+
+	return rc;
+
+init_failure:
+	ibmvmc_cleanup();
 	return rc;
 }
 
 static void __exit ibmvmc_module_exit(void)
 {
 	info("ibmvmc_module_exit\n");
-	vio_unregister_driver(&ibmvmc_driver);
+	ibmvmc_cleanup();
 }
 
 module_init(ibmvmc_module_init);
