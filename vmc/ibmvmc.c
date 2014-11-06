@@ -100,7 +100,7 @@ int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 {
 	// DMA map
 	// H_REG_CRQ
-	return 0;
+	return -EIO;
 }
 
 void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
@@ -124,7 +124,7 @@ int ibmvmc_send_crq(struct crq_server_adapter *adapter,
 		    u64 word1, u64 word2)
 {
 	// H_SEND_CRQ
-	return 0;
+	return -EIO;
 }
 
 // TODO replace vio_*_consistent
@@ -1264,12 +1264,55 @@ static void crq_task(struct work_struct *work)
 {
 }
 
+/* Fill in the liobn and riobn fields on the adapter */
+static int read_dma_window(struct vio_dev *dev,
+				struct crq_server_adapter *adapter)
+{
+	const __be32 *dma_window;
+	const __be32 *prop;
+
+	/* TODO Using of_parse_dma_window would be better, but it doesn't give
+	 * a way to read multiple windows without already knowing the size of
+	 * a window or the number of windows */
+	dma_window =
+		(const __be32 *)vio_get_attribute(dev, "ibm,my-dma-window",
+						NULL);
+	if(!dma_window) {
+		err("Couldn't find ibm,my-dma-window property\n");
+		return -1;
+	}
+
+	adapter->liobn = be32_to_cpu(*dma_window);
+	dma_window++;
+
+	prop = (const __be32 *)vio_get_attribute(dev, "ibm,#dma-address-cells",
+						NULL);
+	if (!prop) {
+		warn("Couldn't find ibm,#dma-address-cells property\n");
+		dma_window++;
+	} else {
+		dma_window += be32_to_cpu(*prop);
+	}
+
+	prop = (const __be32 *)vio_get_attribute(dev, "ibm,#dma-size-cells",
+						NULL);
+	if (!prop) {
+		warn("Couldn't find ibm,#dma-size-cells property\n");
+		dma_window++;
+	} else {
+		dma_window += be32_to_cpu(*prop);
+	}
+
+	// dma_window should point to the second window now
+	adapter->riobn = be32_to_cpu(*dma_window);
+
+	return 0;
+}
+
 static int ibmvmc_probe(struct vio_dev *dev, const struct vio_device_id *id)
 {
 	struct crq_server_adapter *adapter = &ibmvmc_adapter;
 	int rc;
-	unsigned int *dma_window;
-	unsigned int dma_window_property_size;
 
 	info("Probe for UA 0x%x\n", dev->unit_address);
 	memset(adapter, 0, sizeof(*adapter));
@@ -1277,15 +1320,12 @@ static int ibmvmc_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	sprintf(adapter->name,"%s:%x", ibmvmc_driver_name, dev->unit_address);
 	spin_lock_init(&adapter->lock);
 
-	dma_window =
-		(unsigned int *)vio_get_attribute(dev, "ibm,my-dma-window",
-						  &dma_window_property_size);
-	if(!dma_window) {
-		warn("Couldn't find ibm,my-dma-window property\n");
+	rc = read_dma_window(dev, adapter);
+	if (rc != 0) {
+		ibmvmc.state = ibmvmc_state_failed;
+		return -1;
 	}
 
-	adapter->liobn = dma_window[0];
-	adapter->riobn = dma_window[3];
 	info("Probe: liobn 0x%x, riobn 0x%x\n", adapter->liobn, adapter->riobn);
 
 	adapter->queue.crq_handler = ibmvmc_crq_handle;
@@ -1328,7 +1368,7 @@ static int ibmvmc_remove(struct vio_dev *dev)
 }
 
 static struct vio_device_id ibmvmc_device_table[] = {
-	{ "ibmvmc", "IBM,vmc" },
+	{ "ibm,vmc", "IBM,vmc" },
 	{ "", "" }
 };
 
