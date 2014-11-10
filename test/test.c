@@ -10,12 +10,10 @@ int vmc_fd;
 
 int vmc_open()
 {
-	int rc;
-
 	do {
 		vmc_fd = open("/dev/ibmvmc", O_RDWR);
-		printf("vmc_open: vmc_fd = 0x%x, rc = 0x%x, errno = 0x%x\n", vmc_fd, rc, errno);
-	} while ((rc == -1) && (errno == EBUSY));
+		printf("vmc_open: vmc_fd = 0x%x, errno = 0x%x\n", vmc_fd, errno);
+	} while ((vmc_fd == -1) && (errno == EBUSY));
 
 	printf("open: complete.\n");
 	return vmc_fd;
@@ -31,6 +29,9 @@ int vmc_send_hmc_id()
 	} while ((rc == -1) && (errno == EBUSY));
 
 	printf("vmc_send_hmc_id: rc = 0x%x\n", rc);
+	if (errno != 0) {
+		perror("ioctl: ");
+	}
 	return rc;
 }
 
@@ -50,7 +51,10 @@ int vmc_send_msg()
 		if(c == 100) c = 0;
 	} while ((rc == -1) && (errno == EBUSY));
 
-	printf("vmc_send_msg: complete.\n");
+	printf("vmc_send_msg: complete: rc = 0x%x\n", rc);
+	if (errno != 0) {
+		perror("ioctl: ");
+	}
 	return rc;
 }
 
