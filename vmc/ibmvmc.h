@@ -13,7 +13,7 @@
 #define IBMVMC_H
 
 #include <linux/types.h>
-#include <linux/workqueue.h>
+#include <linux/interrupt.h>
 
 #include <asm/vio.h>
 
@@ -53,9 +53,9 @@
 
 enum ibmvmc_states {
 	ibmvmc_state_initial      = 0,
-	ibmvmc_state_viodrv       = 1,
-	ibmvmc_state_chrdev       = 2,
-	ibmvmc_state_cdev         = 3,
+	ibmvmc_state_chrdev       = 1,
+	ibmvmc_state_cdev         = 2,
+	ibmvmc_state_viodrv       = 3,
 	ibmvmc_state_crqinit      = 4,
 	ibmvmc_state_capabilities = 5,
 	ibmvmc_state_ready        = 6,
@@ -80,12 +80,6 @@ struct ibmvmc_buffer {
 	dma_addr_t dma_addr_local;
 	dma_addr_t dma_addr_remote;
 	void *real_addr_local;
-};
-
-struct crq_msg {
-	u8 valid;
-	u8 type;
-	u8 data[14];
 };
 
 struct crq_msg_ibmvmc_admin {
@@ -130,18 +124,17 @@ struct crq_queue {
 	int size, cur;
 	dma_addr_t msg_token;
 	spinlock_t lock;
-	void (*crq_handler)(struct crq_server_adapter *adapter, struct crq_msg *crq);
 };
 
 struct crq_server_adapter
 {
 	char name[16];
-	struct vio_dev *dev;
+	struct device *dev;
 	struct crq_queue queue;
 	spinlock_t lock;
 	u32 liobn;
 	u32 riobn;
-	struct work_struct crq_work;
+	struct tasklet_struct crq_task;
 };
 
 #endif
