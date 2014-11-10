@@ -6,6 +6,7 @@ class HvHmcLessCmd;
 #include <stdio.h>
 
 #include <stdlib.h>
+#include <endian.h>
 
 /* Typedefs */
 #ifndef _HMCLESSTYPES_H
@@ -37,14 +38,14 @@ class HvHmcLessCmd
 
     enum  TypeInd
     {
-	Request                 =  0,
-	Response                =  1
+	Request                 =  0x00,
+	Response                =  0x40
     };
 
     enum  RspInd
     {
-	RspNotExpected          =  0,
-	RspExpected             =  1
+	RspNotExpected          =  0x00,
+	RspExpected             =  0x80
     };
 
     enum  Rc
@@ -123,18 +124,25 @@ class HvHmcLessCmd
 
 private:
 
+    enum
+    {
+	RspIndMask = 0x80,
+	TypeIndMask = 0x40,
+    };
+
     uint8     xDesc[3];              // Descriptor                        000-002
     uint8      xHeaderLength;          // Length of this command Header     003-003
     uint32     xMessageLength;         // Length of this command Message    004-007
     uint32     xCorrelationToken;      // Correlation token                 008-00B
-    Target     xTarget:16;              // Target of the command             00C-00D
+    uint16     xTarget;                 // Target of the command             00C-00D
     uint8      xRsvd2;		     // Reserved for more flags           00F-00F
-    uint8      xRspInd:1;              // a 1 indicates if Response needed  00E-00E
-    uint8      xTypeInd:1;             // a 1 indicates rsp type of command ...
-    uint8      xRsvd1:6;               // Reserved for general flags        ...
+    uint8      xFlags;
+//    uint8      xRspInd:1;              // a 1 indicates if Response needed  00E-00E
+//    uint8      xTypeInd:1;             // a 1 indicates rsp type of command ...
+//    uint8      xRsvd1:6;               // Reserved for general flags        ...
     uint32     xDataLength;	     // Length of this command's Data	  010-013
     uint16     xOpcode;                // Target's OpCode                   014-015
-    Rc         xRc:16;                 // Return code                       016-017
+    uint16     xRc;                    // Return code                       016-017
     uint64     xRsvd3;		     // Reserved for internal use	  018-01F
     char xPayload[HvHmcCmdMaxSize-HvHmcCmdHdrLen];   // Message
 };
@@ -145,7 +153,7 @@ private:
 
 uint16 HvHmcLessCmd::getTarget() const
 {
-    return xTarget;
+    return be16toh((uint16)xTarget);
 }
 //=====================================================================================
 /* not required at least for now
@@ -164,12 +172,12 @@ uint32 	HvHmcLessCmd::getCategoryDesc(Category category)
 //=====================================================================================
 uint32 HvHmcLessCmd::getLength() const
 {
-    return xMessageLength;
+    return be32toh(xMessageLength);
 }
 //=====================================================================================
 uint32 HvHmcLessCmd::getDataLen() const
 {
-    return xDataLength;
+    return be32toh(xDataLength);
 }
 //=====================================================================================
 void *  HvHmcLessCmd::getDataPtr() const
@@ -180,13 +188,13 @@ void *  HvHmcLessCmd::getDataPtr() const
 //=====================================================================================
 uint16 HvHmcLessCmd::getOpcode() const
 {
-    return xOpcode;
+    return be16toh(xOpcode);
 }
 
 //=====================================================================================
 HvHmcLessCmd::Rc HvHmcLessCmd::getRc() const
 {
-    return xRc;
+    return (Rc)be16toh((uint16)xRc);
 }
 
 //=====================================================================================
@@ -231,37 +239,37 @@ Boolean HvHmcLessCmd::isResponseRequested() const
 //=====================================================================================
 void  HvHmcLessCmd::setOpcode(uint16 cmd)
 {
-    xOpcode = cmd;
+    xOpcode = htobe16(cmd);
 }
 
 //=====================================================================================
 void HvHmcLessCmd::setRc(HvHmcLessCmd::Rc rc)
 {
-    xRc = rc;
+    xRc = htobe16((uint16)rc);
 }
 
 //=====================================================================================
 void HvHmcLessCmd::setType(HvHmcLessCmd::TypeInd x)
 {
-    xTypeInd = x;
+    xFlags |= (x & TypeIndMask);
 }
 
 //=====================================================================================
 void HvHmcLessCmd::setResp(HvHmcLessCmd::RspInd x)
 {
-    xRspInd = x;
+    xFlags |= (x & RspIndMask);
 }
 
 
 //=====================================================================================
 uint32	HvHmcLessCmd::getCorrelationToken() const
 {
-    return xCorrelationToken ;
+    return be32toh(xCorrelationToken);
 }
 //=====================================================================================
 void		HvHmcLessCmd::setCorrelationToken(uint32 token)
 {
-    xCorrelationToken =  token;
+    xCorrelationToken = htobe32(token);
 }
 //=====================================================================================
 void       HvHmcLessCmd::setParmsByte(uint16 offset , uint8 val)
