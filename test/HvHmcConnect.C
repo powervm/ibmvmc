@@ -65,9 +65,8 @@ void checkBuffers(int fd)
 
 int main(int argc, char *argv[])
 {
-    char* devname = "/dev/ibmvmc" ;// put something here
-    int loopcount = 3;
-    int echoDataLen = 6;
+    const char* devname = "/dev/ibmvmc" ;// put something here
+    int loopcount = 100;
     int fd;
     int rc;
     HvHmcLessCmd* inbound;
@@ -116,14 +115,16 @@ int main(int argc, char *argv[])
     }
 
     cout << "got the open response" << endl;
-    outbound->dumpHex();
+    inbound->dumpHex();
 
-    cout << "cmd router session is now open";
+    cout << "cmd router session is now open" << endl;
 
     outbound->setOpcode(HvHmcLessCmd::cmdRtrEcho);
     for (int count=0 ; count <loopcount ; count++) {
         outbound->setParmsByte(count, count+1);
         outbound->setDataLen(count+1); // increase the parm length for each msg
+	cout << "ping: " << count << endl;
+//	outbound->dumpHex();
         if (writeMessage(fd,outbound) != 0) {
             exit(5);
         }
@@ -133,11 +134,16 @@ int main(int argc, char *argv[])
             exit(4);
         }
 
+	cout << "ping response" << endl;
+//	inbound->dumpHex();
+
     }
 
     outbound->setDataLen(0);
     outbound->setOpcode(HvHmcLessCmd::Close);
 
+    cout << "sending the close command" << endl;
+    outbound->dumpHex();
     if (writeMessage(fd,outbound) != 0) {
         exit(3);
     }
@@ -145,6 +151,10 @@ int main(int argc, char *argv[])
     if (readMessage(fd,inbound) != 0) {
         exit(4);
     }
+
+    cout << "got the close response" << endl;
+    inbound->dumpHex();
+    cout << "cmd router session is now closed" << endl;
 
     if (close (fd) == -1) {
         cout << "error closing file   " << errno << "  " << perror << "\n" ;

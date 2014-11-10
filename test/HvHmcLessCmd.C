@@ -5,31 +5,28 @@
 #endif
 
 HvHmcLessCmd::HvHmcLessCmd(Target target)
-:   xCorrelationToken(NULL)
-,   xTypeInd(Request)
-,   xRspInd(RspExpected)
-,   xRsvd1(0)
+:   xHeaderLength(HvHmcCmdHdrLen)
+,   xMessageLength(htobe32(HvHmcCmdHdrLen))
+,   xCorrelationToken(0)
+,   xTarget(htobe16((uint16)target))
 ,   xRsvd2(0)
-,   xRsvd3(0)
-,   xOpcode(0)
-,   xHeaderLength(HvHmcCmdHdrLen)
-,   xRc(Good)
+,   xFlags(RspExpected | Request)
 ,   xDataLength(0)
-,   xMessageLength(HvHmcCmdHdrLen)
-
+,   xOpcode(0)
+,   xRc(Good)
+,   xRsvd3(0)
 {
     xDesc[0] = 0xDE;
     xDesc[1] = 0xCA;
     xDesc[2] = 0xFF;
     bzero(xPayload,HvHmcCmdMaxSize-HvHmcCmdHdrLen);
-    xTarget = target;
 
 }
 
 void  HvHmcLessCmd::setDataLen(uint32 len)
 {
-    xDataLength = len;
-    xMessageLength = len + xHeaderLength;
+    xDataLength = htobe32(len);
+    xMessageLength = htobe32(len + xHeaderLength);
 
 }
 
@@ -37,7 +34,7 @@ void  HvHmcLessCmd::setDataLen(uint32 len)
 void HvHmcLessCmd::dumpHex()
 {
     unsigned char* data = (unsigned char*) this;
-    uint16 numberOfBytes = this->xMessageLength;
+    uint16 numberOfBytes = be32toh(this->xMessageLength);
     FILE* outFilePtr = stdout;
 
     int i;
