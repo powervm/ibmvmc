@@ -53,12 +53,10 @@
 
 enum ibmvmc_states {
 	ibmvmc_state_initial      = 0,
-	ibmvmc_state_chrdev       = 1,
-	ibmvmc_state_cdev         = 2,
-	ibmvmc_state_crqinit      = 3,
-	ibmvmc_state_capabilities = 4,
-	ibmvmc_state_ready        = 5,
-	ibmvmc_state_failed       = 6,
+	ibmvmc_state_crqinit      = 1,
+	ibmvmc_state_capabilities = 2,
+	ibmvmc_state_ready        = 3,
+	ibmvmc_state_failed       = 4,
 };
 
 enum ibmhmc_states {
