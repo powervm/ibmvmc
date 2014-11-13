@@ -1590,36 +1590,20 @@ static struct vio_driver ibmvmc_driver = {
 	.remove      = ibmvmc_remove,
 };
 
-static void ibmvmc_cleanup(void)
-{
-	if (ibmvmc.state >= ibmvmc_state_crqinit) {
-		vio_unregister_driver(&ibmvmc_driver);
-	}
-	if (ibmvmc.state >= ibmvmc_state_cdev) {
-		cdev_del(&ibmvmc.cdev);
-	}
-	if (ibmvmc.state >= ibmvmc_state_chrdev) {
-		unregister_chrdev_region(ibmvmc_chrdev, 1);
-	}
-	ibmvmc.state = ibmvmc_state_initial;
-}
-
 static int __init ibmvmc_module_init(void)
 {
 	int rc, i, j;
 
 	ibmvmc.state = ibmvmc_state_initial;
-	info("ibmvmc version %d.%d mod_init\n",
-	     IBMVMC_PROTOCOL_VERSION >> 8, IBMVMC_PROTOCOL_VERSION & 0xFF);
+	info("ibmvmc version %s\n", IBMVMC_DRIVER_VERSION);
 
 	/* Dynamically allocate major number */
         if (alloc_chrdev_region(&ibmvmc_chrdev, 0, 1, ibmvmc_driver_name)) {
                 printk (KERN_WARNING "ibmvmc" ": unable to allocate a dev_t\n");
                 rc = -EIO;
-		goto init_failure;
+		goto alloc_chrdev_failed;
         }
-	ibmvmc.state = ibmvmc_state_chrdev;
-	info("ibmvmc node %d,%d\n", MAJOR(ibmvmc_chrdev), MINOR(ibmvmc_chrdev));
+	info("ibmvmc node %d:%d\n", MAJOR(ibmvmc_chrdev), MINOR(ibmvmc_chrdev));
 
 	/* Initialize data structures */
 	memset(hmcs, 0, sizeof(struct ibmvmc_hmc) * MAX_HMC_INDEX);
@@ -1641,44 +1625,41 @@ static int __init ibmvmc_module_init(void)
 	ibmvmc.max_buffer_pool_size = MAX_BUF_POOL_SIZE;
 	ibmvmc.max_hmc_index = MAX_HMC_INDEX;
 
-	// All init must be done before cdev_add
+	/* Once cdev_add is complete, apps can start trying to use the vmc.
+	 * They will get EBUSY on open until after the probe has completed.
+	 */
 	cdev_init(&ibmvmc.cdev, &ibmvmc_fops);
 	ibmvmc.cdev.owner = THIS_MODULE;
 	ibmvmc.cdev.ops = &ibmvmc_fops;
 	rc = cdev_add(&ibmvmc.cdev, ibmvmc_chrdev, 1);
 	if (rc) {
 		printk(KERN_WARNING "ibmvmc" ": unable to add cdev: %d\n", rc);
-		goto init_failure;
+		goto cdev_add_failed;
 	}
-	ibmvmc.state = ibmvmc_state_cdev;
 
 	rc = vio_register_driver(&ibmvmc_driver);
 
 	if (rc) {
 		warn("rc %d from vio_register_driver\n", rc);
-		goto init_failure;
+		goto vio_reg_failed;
 	}
 
-	/* TODO: Figure out how to fix the states.
-	 * Need to be able to unregister ibmvmc_driver even if there are no
-	 * vmc devices present.
-	 * If a vmc device exists, then vio_register_driver calls into probe,
-	 * which tries to start up the CRQ, which will change the state.
-	 * If a vmc device does not exist, then vio_register_driver will
-	 * complete and nothing else will be called that will update the state.
-	 */
+	return 0;
 
-	return rc;
-
-init_failure:
-	ibmvmc_cleanup();
+vio_reg_failed:
+	cdev_del(&ibmvmc.cdev);
+cdev_add_failed:
+	unregister_chrdev_region(ibmvmc_chrdev, 1);
+alloc_chrdev_failed:
 	return rc;
 }
 
 static void __exit ibmvmc_module_exit(void)
 {
 	info("ibmvmc_module_exit\n");
-	ibmvmc_cleanup();
+	vio_unregister_driver(&ibmvmc_driver);
+	cdev_del(&ibmvmc.cdev);
+	unregister_chrdev_region(ibmvmc_chrdev, 1);
 }
 
 module_init(ibmvmc_module_init);
