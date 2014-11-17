@@ -13,7 +13,7 @@
 #define IBMVMC_H
 
 #include <linux/types.h>
-#include <linux/interrupt.h>
+#include <linux/workqueue.h>
 
 #include <asm/vio.h>
 
@@ -26,7 +26,7 @@
 #define DEFAULT_LOG_LEVEL LOG_LEVEL_NORM
 
 #define MAX_BUF_POOL_SIZE 64
-#define MAX_HMC_INDEX     2
+#define MAX_HMCS          2
 #define MAX_MTU           4*4096
 #define HMC_ID_LEN        32
 
@@ -134,10 +134,10 @@ struct crq_server_adapter
 	char name[16];
 	struct device *dev;
 	struct crq_queue queue;
-	spinlock_t lock;
 	u32 liobn;
 	u32 riobn;
-	struct tasklet_struct crq_task;
+	struct work_struct work;
+	struct workqueue_struct *work_queue;
 };
 
 #endif

@@ -56,7 +56,8 @@ static int ibmvmc_log_level = DEFAULT_LOG_LEVEL;
 
 static DECLARE_WAIT_QUEUE_HEAD(ibmvmc_read_wait);
 
-char ibmvmc_driver_name[] = "ibmvmc";
+static char ibmvmc_driver_name[] = "ibmvmc";
+static char ibmvmc_workq_name[] = "ibmvmc";
 
 struct ibmvmc {
 	u32 state;
@@ -64,9 +65,8 @@ struct ibmvmc {
 	u32 max_buffer_pool_size;
 	u32 max_hmc_index;
 	struct crq_server_adapter *adapter;
-	spinlock_t lock;
+	spinlock_t lock; // TODO unused
 	struct cdev cdev;
-	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
 } ibmvmc;
 
 struct ibmvmc_hmc {
@@ -75,12 +75,12 @@ struct ibmvmc_hmc {
 	u32 state;
 	struct file *file;
 	struct crq_server_adapter *adapter;
-	spinlock_t lock;
+	spinlock_t lock; // TODO semaphore?
 	unsigned char hmc_id[HMC_ID_LEN];
 	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
 	unsigned short queue_outbound_msgs[MAX_BUF_POOL_SIZE];
 	int queue_head, queue_tail;
-} hmcs[MAX_HMC_INDEX];
+} hmcs[MAX_HMCS];
 
 struct crq_server_adapter ibmvmc_adapter;
 dev_t ibmvmc_chrdev;
@@ -118,7 +118,7 @@ static irqreturn_t ibmvmc_handle_event(int irq, void *dev_instance)
 	struct crq_server_adapter *adapter =
 		(struct crq_server_adapter *)dev_instance;
 	vio_disable_interrupts(to_vio_dev(adapter->dev));
-	tasklet_schedule(&adapter->crq_task);
+	queue_work(adapter->work_queue, &adapter->work);
 	return IRQ_HANDLED;
 }
 
@@ -129,7 +129,8 @@ static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 	struct crq_queue *queue = &adapter->queue;
 
 	free_irq(vdev->irq, (void *)adapter);
-	tasklet_kill(&adapter->crq_task);
+	flush_workqueue(adapter->work_queue);
+	destroy_workqueue(adapter->work_queue);
 
 	do {
 		if (rc) {
@@ -169,7 +170,7 @@ static int ibmvmc_reset_crq_queue(struct crq_server_adapter *adapter)
 		/* Adapter is good, but other end is not ready */
 		warn("Partner adapter not ready\n");
 	} else if (rc != 0) {
-		warn("couldn't register crq--rc 0x%x\n", rc);
+		err("couldn't register crq--rc 0x%x\n", rc);
 	}
 	return rc;
 }
@@ -211,7 +212,7 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 	long rc;
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
 
-	info(LOG_LEVEL_TRACE, "ibmvmc_send_crq(0x%x, 0x%llx, 0x%llx)\n",
+	info(LOG_LEVEL_TRACE, "ibmvmc_send_crq(0x%x, 0x%016llx, 0x%016llx)\n",
 			vdev->unit_address, word1, word2);
 
 	/*
@@ -259,37 +260,6 @@ void vio_free_consistent(struct vio_dev *vdev, size_t size, void *vaddr,
 	// deallocate memory
 	kzfree(vaddr);
 }
-
-#if 0
-static struct ibmvmc_buffer * get_free_channel_buffer(void)
-{
-	unsigned long i;
-	struct ibmvmc_buffer *buffer;
-	struct ibmvmc_buffer *ret_buf = NULL;
-
-	buffer = ibmvmc.buffer;
-	spin_lock(&(ibmvmc.lock));
-
-	for(i=0; i<MAX_BUF_POOL_SIZE; i++) {
-		if((buffer[i].valid) && (buffer[i].free) &&
-		   (buffer[i].owner == VMC_BUF_OWNER_ALPHA)) {
-			buffer[i].free = 0;
-			ret_buf = &(buffer[i]);
-			break;
-		}
-	}
-
-	spin_unlock(&(ibmvmc.lock));
-	return ret_buf;
-}
-
-static void return_channel_buffer(struct ibmvmc_buffer *buffer)
-{
-	spin_lock(&(ibmvmc.lock));
-	buffer->free = 1;
-	spin_unlock(&(ibmvmc.lock));
-}
-#endif
 
 static struct ibmvmc_buffer * get_valid_hmc_buffer_locked(u8 hmc_index)
 {
@@ -342,9 +312,10 @@ static struct ibmvmc_buffer * get_free_hmc_buffer_locked(u8 hmc_index)
 static void return_hmc_buffer(struct ibmvmc_hmc *hmc,
 		struct ibmvmc_buffer *buffer)
 {
-	spin_lock(&(hmc->lock));
+	unsigned long flags;
+	spin_lock_irqsave(&(hmc->lock), flags);
 	buffer->free = 1;
-	spin_unlock(&(hmc->lock));
+	spin_unlock_irqrestore(&(hmc->lock), flags);
 }
 
 static void count_hmc_buffers(u8 hmc_index, unsigned int *valid,
@@ -352,8 +323,9 @@ static void count_hmc_buffers(u8 hmc_index, unsigned int *valid,
 {
 	unsigned long i;
 	struct ibmvmc_buffer *buffer;
+	unsigned long flags;
 
-	if(hmc_index > MAX_HMC_INDEX)
+	if(hmc_index > ibmvmc.max_hmc_index)
 		return;
 
 	if(valid == NULL || free == NULL)
@@ -361,12 +333,8 @@ static void count_hmc_buffers(u8 hmc_index, unsigned int *valid,
 
 	*valid = 0; *free = 0;
 
-	if(hmc_index == 0xFF) {
-		buffer = ibmvmc.buffer;
-	} else {
-		buffer = hmcs[hmc_index].buffer;
-	}
-	spin_lock(&(hmcs[hmc_index].lock));
+	buffer = hmcs[hmc_index].buffer;
+	spin_lock_irqsave(&(hmcs[hmc_index].lock), flags);
 
 	for(i=0; i<MAX_BUF_POOL_SIZE; i++) {
 		if(buffer[i].valid) {
@@ -377,25 +345,26 @@ static void count_hmc_buffers(u8 hmc_index, unsigned int *valid,
 		}
 	}
 
-	spin_unlock(&(hmcs[hmc_index].lock));
+	spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
 }
 
 static struct ibmvmc_hmc * ibmvmc_get_free_hmc(void)
 {
 	unsigned long i;
+	unsigned long flags;
 
 	/*
 	 * Find an available HMC connection.
 	 */
 	for(i = 0; i <= ibmvmc.max_hmc_index; i++) {
-		spin_lock(&(hmcs[i].lock));
+		spin_lock_irqsave(&(hmcs[i].lock), flags);
 		if(hmcs[i].state == ibmhmc_state_free) {
 			hmcs[i].index = i;
 			hmcs[i].state = ibmhmc_state_initial;
-			spin_unlock(&(hmcs[i].lock));
+			spin_unlock_irqrestore(&(hmcs[i].lock), flags);
 			return(&hmcs[i]);
 		}
-		spin_unlock(&(hmcs[i].lock));
+		spin_unlock_irqrestore(&(hmcs[i].lock), flags);
 	}
 
 	return NULL;
@@ -407,6 +376,7 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
 	struct ibmvmc_buffer *buffer;
 	struct crq_server_adapter *adapter;
 	struct vio_dev *vdev;
+	unsigned long flags;
 
 	if((hmc == NULL) || (hmc->adapter == NULL))
 		return -EIO;
@@ -414,7 +384,7 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
 	adapter = hmc->adapter;
 	vdev = to_vio_dev(adapter->dev);
 
-	spin_lock(&(hmc->lock));
+	spin_lock_irqsave(&(hmc->lock), flags);
 	hmc->index = 0;
 	hmc->state = ibmhmc_state_free;
 	hmc->queue_head = 0;
@@ -427,13 +397,14 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
 					    ibmvmc.max_mtu,
 					    buffer[i].real_addr_local,
 					    buffer[i].dma_addr_local);
+			info(LOG_LEVEL_TRACE, "Forgot buffer id 0x%lx\n", i);
 		}
 		memset(&buffer[i], 0, sizeof(struct ibmvmc_buffer));
 
 		hmc->queue_outbound_msgs[i] = VMC_INVALID_BUFFER_ID;
 	}
 
-	spin_unlock(&(hmc->lock));
+	spin_unlock_irqrestore(&(hmc->lock), flags);
 
 	return 0;
 }
@@ -525,7 +496,7 @@ int ibmvmc_send_capabilities(struct crq_server_adapter *adapter)
 	crq_msg.status = 0;
 	crq_msg.rsvd[0] = 0;
 	crq_msg.rsvd[1] = 0;
-	crq_msg.max_hmc = MAX_HMC_INDEX;
+	crq_msg.max_hmc = MAX_HMCS;
 	crq_msg.max_mtu = cpu_to_be32(MAX_MTU);
 	crq_msg.pool_size = cpu_to_be16(MAX_BUF_POOL_SIZE);
 	crq_msg.crq_size = cpu_to_be16(adapter->queue.size);
@@ -612,9 +583,8 @@ static int send_msg(struct crq_server_adapter *adapter,
 	crq_msg.hmc_index = hmc->index;
 	crq_msg.var2.buffer_id = cpu_to_be16(buffer->id);
 	crq_msg.var3.msg_len = cpu_to_be32(msg_len);
-	info(LOG_LEVEL_TRACE, "CRQ send: msg to HV 0x%lx 0x%lx\n",
-	     *((unsigned long *)&crq_msg),
-	     *(((unsigned long *)&crq_msg)+1));
+	info(LOG_LEVEL_TRACE, "CRQ send: msg to HV 0x%llx 0x%llx\n",
+			be64_to_cpu(crq_as_u64[0]), be64_to_cpu(crq_as_u64[1]));
 
 	buffer->owner = VMC_BUF_OWNER_HV;
 	ibmvmc_send_crq(adapter, be64_to_cpu(crq_as_u64[0]),
@@ -626,6 +596,7 @@ static int send_msg(struct crq_server_adapter *adapter,
 static int ibmvmc_open(struct inode *inode, struct file *file)
 {
 	int retval = 0;
+	unsigned long index = 0;
 	struct ibmvmc_hmc *hmc;
 	unsigned int valid = 0, free = 0;
 
@@ -638,13 +609,21 @@ static int ibmvmc_open(struct inode *inode, struct file *file)
 		return -EIO;
 	}
 
+	if(ibmvmc.state < ibmvmc_state_ready) {
+		warn("vmc_open: not state_ready\n");
+		return -EBUSY;
+	}
+
 	/* Device is busy until capabilities have been exchanged and we
 	 * have a generic buffer for each possible HMC connection.
 	 */
-	count_hmc_buffers(0xFF, &valid, &free);
-	if(ibmvmc.state < ibmvmc_state_ready || valid < ibmvmc.max_hmc_index) {
-		warn("vmc_open: not state_ready\n");
-		return -EBUSY;
+	for(index = 0; index <= ibmvmc.max_hmc_index; index++) {
+		valid = 0;
+		count_hmc_buffers(index, &valid, &free);
+		if(valid == 0) {
+			warn("vmc_open: buffers not ready for index %ld\n", index);
+			return -EBUSY;
+		}
 	}
 
 	/* Get an hmc object, and transition to ibmhmc_state_initial */
@@ -696,8 +675,6 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 		warn("close: send_close failed.\n");
 	}
 
-	rc = ibmvmc_return_hmc(hmc);
-
 	return rc;
 }
 
@@ -709,6 +686,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 	struct crq_server_adapter *adapter;
 	struct ibmvmc_buffer *buffer;
 	ssize_t retval = 0;
+	unsigned long flags;
 
 	info(LOG_LEVEL_TRACE, "read: file = 0x%lx, buf = 0x%lx, nbytes = 0x%lx\n",
 	     (unsigned long)file, (unsigned long) buf, (unsigned long)nbytes);
@@ -734,12 +712,12 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 
 
 	do {
-		spin_lock(&(hmc->lock));
+		spin_lock_irqsave(&(hmc->lock), flags);
 		if(hmc->queue_tail != hmc->queue_head) {
 			/* Data is available */
 			break;
 		}
-		spin_unlock(&(hmc->lock));
+		spin_unlock_irqrestore(&(hmc->lock), flags);
 
                 if (file->f_flags & O_NONBLOCK) {
                         retval = -EAGAIN;
@@ -760,7 +738,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 	hmc->queue_tail++;
 	if(hmc->queue_tail == MAX_BUF_POOL_SIZE)
 		hmc->queue_tail = 0;
-	spin_unlock(&(hmc->lock));
+	spin_unlock_irqrestore(&(hmc->lock), flags);
 
 	nbytes = min(nbytes, (size_t)buffer->msg_len);
 	n = copy_to_user((void *)buf, buffer->real_addr_local, nbytes);
@@ -806,12 +784,13 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	unsigned char *buf;
 	struct crq_server_adapter *adapter;
 	struct ibmvmc_hmc *hmc;
+	unsigned long flags;
 
 	hmc = file->private_data;
 	if(!hmc)
 		return -EIO;
 
-	spin_lock(&(hmc->lock));
+	spin_lock_irqsave(&(hmc->lock), flags);
 	if(hmc->state == ibmhmc_state_free) {
 		/* HMC connection is not valid (possibly was reset under us). */
 		ret = -EIO;
@@ -855,7 +834,7 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 		goto out;
 	}
 	if(vmc_buffer->real_addr_local == NULL) {
-		warn("ibmvmc_write: no buffer storage assigned\n");
+		err("ibmvmc_write: no buffer storage assigned\n");
 		ret = -EIO;
 		goto out;
 	}
@@ -885,7 +864,7 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	send_msg(adapter, vmc_buffer, hmc, count);
 	ret = p - buffer;
  out:
-	spin_unlock(&(hmc->lock));
+	spin_unlock_irqrestore(&(hmc->lock), flags);
 	return (ssize_t)(ret);
 }
 
@@ -897,6 +876,8 @@ static long ibmvmc_ioctl(struct file *file,
 	struct ibmvmc_hmc *hmc;
 	long rc = 0;
 	int cnt_buffers[2], n;
+	char print_buffer[HMC_ID_LEN+1];
+	unsigned long flags;
 
 	hmc = file->private_data;
 	info(LOG_LEVEL_TRACE, "ioctl: file=0x%lx, cmd=0x%x, arg=0x%lx, hmc=0x%lx\n",
@@ -914,10 +895,9 @@ static long ibmvmc_ioctl(struct file *file,
 
 	switch (cmd) {
 	case VMC_IOCTL_SETHMCID:
-		spin_lock(&(hmc->lock));
+		spin_lock_irqsave(&(hmc->lock), flags);
 		buffer = get_valid_hmc_buffer_locked(hmc->index);
-		spin_unlock(&(hmc->lock));
-		// DRENG buffer = get_free_channel_buffer();
+		spin_unlock_irqrestore(&(hmc->lock), flags);
 
 		if(buffer == NULL || (buffer->real_addr_local == NULL)) {
 			warn("ioctl: no buffer available\n");
@@ -934,6 +914,11 @@ static long ibmvmc_ioctl(struct file *file,
 		if(bytes) {
 			return -EFAULT;
 		}
+
+		/* Make sure buffer is NULL terminated before trying to print it */
+		memset(print_buffer, 0, HMC_ID_LEN+1);
+		strncpy(print_buffer, hmc->hmc_id, HMC_ID_LEN);
+		info(LOG_LEVEL_NORM, "ioctl: Set HMC ID: \"%s\"\n", print_buffer);
 
 		memcpy(buffer->real_addr_local, hmc->hmc_id, HMC_ID_LEN);
 		/* RDMA over ID, send open msg, change state to ibmhmc_state_opening */
@@ -973,6 +958,7 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 	u8 hmc_index, hmc_session;
 	u16 buffer_id;
 	struct ibmvmc_buffer *buffer;
+	unsigned long flags;
 
 	if(crq == NULL) return -1;
 
@@ -980,21 +966,13 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 	hmc_index = crq->hmc_index;
 	buffer_id = be16_to_cpu(crq->var2.buffer_id);
 
-	if(hmc_index > MAX_HMC_INDEX && hmc_index != 0xFF) {
+	if(hmc_index > ibmvmc.max_hmc_index) {
 		err("add_buffer: invalid hmc_index = 0x%x\n", hmc_index);
 		ibmvmc_send_add_buffer_resp(adapter, VMC_MSG_INVALID_HMC_INDEX,
 					    hmc_session, hmc_index, buffer_id);
 		return -1;
 	}
-#if 0
-	// DRENG
-	if(hmc_index <= MAX_HMC_INDEX && hmcs[hmc_index].state == ibmhmc_state_free) {
-		info("add_buffer: hmc has been freed - dropping buffer\n");
-		ibmvmc_send_add_buffer_resp(adapter, VMC_MSG_CLOSED_HMC,
-					    hmc_session, hmc_index, buffer_id);
-		return 0;
-	}
-#endif
+
 	if(buffer_id >= ibmvmc.max_buffer_pool_size) {
 		err("add_buffer: invalid buffer_id = 0x%x\n", buffer_id);
 		ibmvmc_send_add_buffer_resp(adapter, VMC_MSG_INVALID_BUFFER_ID,
@@ -1002,15 +980,13 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 		return -1;
 	}
 
-	if(hmc_index == 0xFF) {
-		buffer = &(ibmvmc.buffer[buffer_id]);
-	} else {
-		buffer = &(hmcs[hmc_index].buffer[buffer_id]);
-	}
+	spin_lock_irqsave(&(hmcs[hmc_index].lock), flags);
+	buffer = &(hmcs[hmc_index].buffer[buffer_id]);
 
 	if(buffer->real_addr_local || buffer->dma_addr_local) {
 		warn("add_buffer: buffer already allocated for buffer_id = 0x%lx\n",
 		     (unsigned long) buffer_id);
+		spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
 		ibmvmc_send_add_buffer_resp(adapter, VMC_MSG_INVALID_BUFFER_ID,
 					    hmc_session, hmc_index, buffer_id);
 		return -1;
@@ -1022,6 +998,7 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 
 	if(buffer->real_addr_local == NULL) {
 		err("add_buffer: vio_alloc_consistent failed.\n");
+		spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
 		ibmvmc_send_add_buffer_resp(adapter, VMC_MSG_INTERFACE_FAILURE,
 					    hmc_session, hmc_index, buffer_id);
 		return -1;
@@ -1035,7 +1012,14 @@ int ibmvmc_add_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 	buffer->valid = 1;
 	buffer->id = buffer_id;
 
-	info(LOG_LEVEL_TRACE, "add_buffer: successfully added a buffer.\n");
+	info(LOG_LEVEL_TRACE, "add_buffer: successfully added a buffer:\n");
+	info(LOG_LEVEL_TRACE, "            index: %d, session: %d, buffer: 0x%x, "
+			"owner: %d\n",
+			hmc_index, hmc_session, buffer_id, buffer->owner);
+	info(LOG_LEVEL_TRACE, "            local: 0x%x, remote: 0x%x\n",
+			(u32)buffer->dma_addr_local, (u32)buffer->dma_addr_remote);
+	spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
+
 	ibmvmc_send_add_buffer_resp(adapter, VMC_MSG_SUCCESS, hmc_session,
 				    hmc_index, buffer_id);
 
@@ -1052,6 +1036,7 @@ int ibmvmc_rem_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 	u8 hmc_index, hmc_session;
 	u16 buffer_id = 0;
 	struct ibmvmc_buffer *buffer;
+	unsigned long flags;
 
 	if(crq == NULL) return -1;
 
@@ -1065,11 +1050,11 @@ int ibmvmc_rem_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 		return -1;
 	}
 
-	spin_lock(&(hmcs[hmc_index].lock));
+	spin_lock_irqsave(&(hmcs[hmc_index].lock), flags);
 	buffer = get_free_hmc_buffer_locked(hmc_index);
 	if(buffer == NULL) {
 		info(LOG_LEVEL_NORM, "rem_buffer: unable to find buffer to remove\n");
-		spin_unlock(&(hmcs[hmc_index].lock));
+		spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
 		ibmvmc_send_rem_buffer_resp(adapter, VMC_MSG_NO_BUFFER, hmc_session,
 					    hmc_index, VMC_INVALID_BUFFER_ID);
 		return -1;
@@ -1084,7 +1069,7 @@ int ibmvmc_rem_buffer(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc 
 				    buffer->dma_addr_local);
 	}
 	memset(buffer, 0, sizeof(struct ibmvmc_buffer));
-	spin_unlock(&(hmcs[hmc_index].lock));
+	spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
 
 	info(LOG_LEVEL_TRACE, "rem_buffer: removed buffer 0x%x.\n", buffer_id);
 	ibmvmc_send_rem_buffer_resp(adapter, VMC_MSG_SUCCESS, hmc_session,
@@ -1101,8 +1086,14 @@ static int recv_msg(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc *c
 	struct ibmvmc_buffer *buffer;
 	unsigned long msg_len;
 	struct ibmvmc_hmc *hmc;
+	unsigned long flags;
 
 	if(crq == NULL) return -1;
+
+	/* Hypervisor writes CRQs directly into our memory in big endian */
+	info(LOG_LEVEL_TRACE, "recv_msg: msg from HV 0x%016llx 0x%016llx\n",
+			be64_to_cpu(*((unsigned long *)crq)),
+			be64_to_cpu(*(((unsigned long *)crq)+1)));
 
 	hmc_session = crq->hmc_session;
 	hmc_index = crq->hmc_index;
@@ -1124,12 +1115,12 @@ static int recv_msg(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc *c
 	}
 
 	hmc = &hmcs[hmc_index];
-	spin_lock(&(hmc->lock));
+	spin_lock_irqsave(&(hmc->lock), flags);
 
 	if(hmc->state == ibmhmc_state_free) {
 		err("recv_msg: invalid hmc state = 0x%x\n", hmc->state);
 		/* HMC connection is not valid (possibly was reset under us). */
-		spin_unlock(&(hmc->lock));
+		spin_unlock_irqrestore(&(hmc->lock), flags);
 		return -1;
 	}
 
@@ -1138,7 +1129,7 @@ static int recv_msg(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc *c
 	if((buffer->valid == 0) || buffer->owner == VMC_BUF_OWNER_ALPHA) {
 		err("recv_msg: buffer not valid, or not owned by HV.  0x%x 0x%x\n",
 		    buffer->valid, buffer->owner);
-		spin_unlock(&(hmc->lock));
+		spin_unlock_irqrestore(&(hmc->lock), flags);
 		return -1;
 	}
 
@@ -1153,27 +1144,27 @@ static int recv_msg(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc *c
 			"queue_head = 0x%x, hmc_idx = 0x%x\n", (unsigned int)msg_len,
 			(unsigned int)buffer_id, (unsigned int)hmc->queue_head,
 			(unsigned int)hmc_index);
-	info(LOG_LEVEL_TRACE, "recv_msg: msg from HV 0x%lx 0x%lx\n",
-			*((unsigned long *)crq), *(((unsigned long *)crq)+1));
 	buffer->msg_len = msg_len;
 	buffer->free = 0;
 	buffer->owner = VMC_BUF_OWNER_ALPHA;
 
 	if(rc) {
 		err("failure in recv_msg: h_copy_rdma = 0x%x\n", rc);
-		spin_unlock(&(hmc->lock));
+		spin_unlock_irqrestore(&(hmc->lock), flags);
 		return -1;
 	}
 
-	/* No lock needed as the function cannot be executed by 2 threads. */
+	/* Must be locked because read operates on the same data */
 	hmc->queue_outbound_msgs[hmc->queue_head] = buffer_id;
 	hmc->queue_head++;
-	if(hmc->queue_head == MAX_BUF_POOL_SIZE)
+	if(hmc->queue_head == MAX_BUF_POOL_SIZE) {
 		hmc->queue_head = 0;
-	if(hmc->queue_head == hmc->queue_tail)
+	}
+	if(hmc->queue_head == hmc->queue_tail) {
 		err("recv_msg: outbound buffer queue wrapped.\n");
+	}
 
-	spin_unlock(&(hmc->lock));
+	spin_unlock_irqrestore(&(hmc->lock), flags);
 
 	wake_up_interruptible(&ibmvmc_read_wait);
 	return 0;
@@ -1193,7 +1184,7 @@ void ibmvmc_process_capabilities(struct crq_msg_ibmvmc *crqp)
 	ibmvmc.max_mtu = min((u32) MAX_MTU, be32_to_cpu(crq->max_mtu));
 	ibmvmc.max_buffer_pool_size = min((u16) MAX_BUF_POOL_SIZE,
 						(u16) be16_to_cpu(crq->pool_size));
-	ibmvmc.max_hmc_index = min((u8) MAX_HMC_INDEX, crq->max_hmc) - 1;
+	ibmvmc.max_hmc_index = min((u8) MAX_HMCS, crq->max_hmc) - 1;
 	ibmvmc.state = ibmvmc_state_ready;
 
 	info(LOG_LEVEL_NORM, "capabilites: max_mtu=0x%x, max_buf_pool_size=0x%x, "
@@ -1210,11 +1201,6 @@ static int ibmvmc_validate_hmc_session(struct crq_msg_ibmvmc *crq)
 	if(crq->hmc_session == 0) {
 		return 0;
 	}
-#if 0
-	// DRENG
-	if(hmc_index == 0xFF)
-		return 0;
-#endif
 
 	if(hmc_index > ibmvmc.max_hmc_index) {
 		return -1;
@@ -1235,7 +1221,7 @@ static void ibmvmc_reset(void)
 	int i;
 
 	info(LOG_LEVEL_NORM, "*** Reset to initial state.\n");
-	for(i=0; i<MAX_HMC_INDEX; i++) {
+	for(i=0; i<MAX_HMCS; i++) {
 		if(hmcs[i].state != ibmhmc_state_free) {
 			ibmvmc_return_hmc(&hmcs[i]);
 		}
@@ -1249,7 +1235,8 @@ void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
 	unsigned short buffer_id;
 
 	hmc_index = crq->hmc_index;
-	if(hmc_index > ibmvmc.max_hmc_index && hmc_index != 0xFF) {
+	if(hmc_index > ibmvmc.max_hmc_index) {
+		/* Why would PHYP give an index > max negotiated? */
 		ibmvmc_reset();
 	}
 
@@ -1257,26 +1244,24 @@ void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
 		warn("open_resp: failed - status 0x%x\n", crq->status);
 		ibmvmc_return_hmc(&hmcs[hmc_index]);
 		return;
-	} else {
-		if(hmcs[hmc_index].state == ibmhmc_state_opening) {
-			buffer_id = be16_to_cpu(crq->var2.buffer_id);
-			if(buffer_id >= ibmvmc.max_buffer_pool_size) {
-				err("process_open_resp: invalid buffer_id = 0x%x\n",
-				    buffer_id);
-				hmcs[hmc_index].state = ibmhmc_state_failed;
-			} else {
-				return_hmc_buffer(&(hmcs[hmc_index]), &(hmcs[hmc_index].buffer[buffer_id]));
-				// DRENG return_channel_buffer(&(ibmvmc.buffer[buffer_id]));
-				hmcs[hmc_index].state = ibmhmc_state_ready;
-				info(LOG_LEVEL_TRACE, "open_resp: set hmc state = "
-						"ready (0x%x)\n",
-						hmcs[hmc_index].state);
-			}
-		} else {
-			warn("open_resp: invalid hmc state (0x%x)\n",
-			     hmcs[hmc_index].state);
-		}
+	}
 
+	if(hmcs[hmc_index].state == ibmhmc_state_opening) {
+		buffer_id = be16_to_cpu(crq->var2.buffer_id);
+		if(buffer_id >= ibmvmc.max_buffer_pool_size) {
+			err("process_open_resp: invalid buffer_id = 0x%x\n",
+					buffer_id);
+			hmcs[hmc_index].state = ibmhmc_state_failed;
+		} else {
+			return_hmc_buffer(&(hmcs[hmc_index]), &(hmcs[hmc_index].buffer[buffer_id]));
+			hmcs[hmc_index].state = ibmhmc_state_ready;
+			info(LOG_LEVEL_TRACE, "open_resp: set hmc state = "
+					"ready (0x%x)\n",
+					hmcs[hmc_index].state);
+		}
+	} else {
+		warn("open_resp: invalid hmc state (0x%x)\n",
+				hmcs[hmc_index].state);
 	}
 }
 
@@ -1284,14 +1269,23 @@ void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
  * If the close fails, simply reset the entire driver as the state of the VMC
  * must be in tough shape.
  */
-void ibmvmc_process_close_resp(struct crq_msg_ibmvmc *crqp)
+void ibmvmc_process_close_resp(struct crq_msg_ibmvmc *crq)
 {
-	struct crq_msg_ibmvmc_admin *crq = (struct crq_msg_ibmvmc_admin *)crqp;
+	unsigned char hmc_index;
+
+	hmc_index = crq->hmc_index;
+	if(hmc_index > ibmvmc.max_hmc_index) {
+		ibmvmc_reset();
+		return;
+	}
 
 	if(crq->status) {
 		warn("close_resp: failed - status 0x%x\n", crq->status);
 		ibmvmc_reset();
+		return;
 	}
+
+	ibmvmc_return_hmc(&hmcs[hmc_index]);
 }
 
 void ibmvmc_crq_process(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc *crq)
@@ -1372,7 +1366,7 @@ static void ibmvmc_handle_crq(struct crq_msg_ibmvmc *crq, struct crq_server_adap
 			}
 			break;
 		default:
-			err("Unknown crq message type 0x%lx\n",
+			warn("Unknown crq message type 0x%lx\n",
 			    (unsigned long) crq->type);
 		}
 		break;
@@ -1389,9 +1383,9 @@ static void ibmvmc_handle_crq(struct crq_msg_ibmvmc *crq, struct crq_server_adap
 	}
 }
 
-static void ibmvmc_task(void *data)
+static void ibmvmc_task(struct work_struct *work)
 {
-	struct crq_server_adapter *adapter = (struct crq_server_adapter *)data;
+	struct crq_server_adapter *adapter = container_of(work, struct crq_server_adapter, work);
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
 	struct crq_msg_ibmvmc *crq;
 	int done = 0;
@@ -1448,15 +1442,20 @@ static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 		warn("Partner adapter not ready\n");
 		retrc = 0;
 	} else if (rc != 0) {
-		warn("Error %d opening adapter\n", rc);
+		err("Error %d opening adapter\n", rc);
 		goto reg_crq_failed;
 	}
 
 	queue->cur = 0;
 	spin_lock_init(&queue->lock);
 
-	tasklet_init(&adapter->crq_task, (void *)ibmvmc_task,
-			(unsigned long)adapter);
+	adapter->work_queue = create_singlethread_workqueue(ibmvmc_workq_name);
+	if (adapter->work_queue == NULL) {
+		err("couldn't allocate work queue\n");
+		goto create_workqueue_failed;
+	}
+
+	INIT_WORK(&adapter->work, ibmvmc_task);
 
 	if (request_irq(vdev->irq,
 			ibmvmc_handle_event,
@@ -1475,7 +1474,10 @@ static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 	return retrc;
 
 req_irq_failed:
-	tasklet_kill(&adapter->crq_task);
+	/* Cannot have any work since we either never got our IRQ registered,
+	 * or never got interrupts enabled */
+	destroy_workqueue(adapter->work_queue);
+create_workqueue_failed:
 	rc = 0;
 	do {
 		if (rc) {
@@ -1549,7 +1551,6 @@ static int ibmvmc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	memset(adapter, 0, sizeof(*adapter));
 	adapter->dev = &vdev->dev;
 	sprintf(adapter->name,"%s:%x", ibmvmc_driver_name, vdev->unit_address);
-	spin_lock_init(&adapter->lock);
 
 	rc = read_dma_window(vdev, adapter);
 	if (rc != 0) {
@@ -1615,7 +1616,7 @@ static int __init ibmvmc_module_init(void)
 
 	/* Dynamically allocate major number */
         if (alloc_chrdev_region(&ibmvmc_chrdev, 0, 1, ibmvmc_driver_name)) {
-                warn("unable to allocate a dev_t\n");
+                err("unable to allocate a dev_t\n");
                 rc = -EIO;
 		goto alloc_chrdev_failed;
         }
@@ -1623,8 +1624,8 @@ static int __init ibmvmc_module_init(void)
 			MINOR(ibmvmc_chrdev));
 
 	/* Initialize data structures */
-	memset(hmcs, 0, sizeof(struct ibmvmc_hmc) * MAX_HMC_INDEX);
-	for(i=0; i<MAX_HMC_INDEX; i++) {
+	memset(hmcs, 0, sizeof(struct ibmvmc_hmc) * MAX_HMCS);
+	for(i=0; i<MAX_HMCS; i++) {
 		spin_lock_init(&hmcs[i].lock);
 		hmcs[i].state = ibmhmc_state_free;
 		for(j=0; j<MAX_BUF_POOL_SIZE; j++) {
@@ -1640,7 +1641,7 @@ static int __init ibmvmc_module_init(void)
 	 */
 	ibmvmc.max_mtu = MAX_MTU;
 	ibmvmc.max_buffer_pool_size = MAX_BUF_POOL_SIZE;
-	ibmvmc.max_hmc_index = MAX_HMC_INDEX;
+	ibmvmc.max_hmc_index = MAX_HMCS - 1;
 
 	/* Once cdev_add is complete, apps can start trying to use the vmc.
 	 * They will get EBUSY on open until after the probe has completed.
@@ -1650,14 +1651,14 @@ static int __init ibmvmc_module_init(void)
 	ibmvmc.cdev.ops = &ibmvmc_fops;
 	rc = cdev_add(&ibmvmc.cdev, ibmvmc_chrdev, 1);
 	if (rc) {
-		warn("unable to add cdev: %d\n", rc);
+		err("unable to add cdev: %d\n", rc);
 		goto cdev_add_failed;
 	}
 
 	rc = vio_register_driver(&ibmvmc_driver);
 
 	if (rc) {
-		warn("rc %d from vio_register_driver\n", rc);
+		err("rc %d from vio_register_driver\n", rc);
 		goto vio_reg_failed;
 	}
 
