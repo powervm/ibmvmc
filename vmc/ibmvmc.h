@@ -14,6 +14,7 @@
 
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <linux/cdev.h>
 
 #include <asm/vio.h>
 
@@ -119,8 +120,6 @@ struct crq_msg_ibmvmc {
 	} var3;
 };
 
-struct crq_server_adapter;
-
 /* an RPA command/response transport queue */
 struct crq_queue {
 	struct crq_msg_ibmvmc *msgs;
@@ -129,8 +128,8 @@ struct crq_queue {
 	spinlock_t lock;
 };
 
-struct crq_server_adapter
-{
+/* VMC server adapter settings */
+struct crq_server_adapter {
 	char name[16];
 	struct device *dev;
 	struct crq_queue queue;
@@ -138,6 +137,30 @@ struct crq_server_adapter
 	u32 riobn;
 	struct work_struct work;
 	struct workqueue_struct *work_queue;
+};
+
+/* Driver wide settings */
+struct ibmvmc_struct {
+	u32 state;
+	u32 max_mtu;
+	u32 max_buffer_pool_size;
+	u32 max_hmc_index;
+	struct crq_server_adapter *adapter;
+	struct cdev cdev;
+};
+
+/* Connection specific settings */
+struct ibmvmc_hmc {
+	u8 session;
+	u8 index;
+	u32 state;
+	struct file *file;
+	struct crq_server_adapter *adapter;
+	spinlock_t lock;
+	unsigned char hmc_id[HMC_ID_LEN];
+	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
+	unsigned short queue_outbound_msgs[MAX_BUF_POOL_SIZE];
+	int queue_head, queue_tail;
 };
 
 #endif
