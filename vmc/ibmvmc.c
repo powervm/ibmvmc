@@ -104,6 +104,17 @@ static inline long h_copy_rdma(s64 length,
 	return rc;
 }
 
+static inline void h_free_crq(uint32_t unit_address)
+{
+	long rc = 0;
+	do {
+		if (H_IS_LONG_BUSY(rc)) {
+			msleep(get_longbusy_msecs(rc));
+		}
+		rc = plpar_hcall_norets(H_FREE_CRQ, unit_address);
+	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
+}
+
 /* routines for managing a command/response queue */
 /**
  * ibmvmc_handle_event: - Interrupt handler for crq events
@@ -124,7 +135,6 @@ static irqreturn_t ibmvmc_handle_event(int irq, void *dev_instance)
 
 static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 {
-	long rc = 0;
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
 	struct crq_queue *queue = &adapter->queue;
 
@@ -132,12 +142,7 @@ static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 	flush_workqueue(adapter->work_queue);
 	destroy_workqueue(adapter->work_queue);
 
-	do {
-		if (rc) {
-			msleep(100);
-		}
-		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
-	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
+	h_free_crq(vdev->unit_address);
 	dma_unmap_single(adapter->dev,
 			queue->msg_token,
 			queue->size * sizeof(*queue->msgs), DMA_BIDIRECTIONAL);
@@ -151,12 +156,7 @@ static int ibmvmc_reset_crq_queue(struct crq_server_adapter *adapter)
 	struct crq_queue *queue = &adapter->queue;
 
 	/* Close the CRQ */
-	do {
-		if (rc) {
-			msleep(100);
-		}
-		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
-	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
+	h_free_crq(vdev->unit_address);
 
 	/* Clean out the queue */
 	memset(queue->msgs, 0x00, PAGE_SIZE);
@@ -1478,13 +1478,7 @@ req_irq_failed:
 	 * or never got interrupts enabled */
 	destroy_workqueue(adapter->work_queue);
 create_workqueue_failed:
-	rc = 0;
-	do {
-		if (rc) {
-			msleep(100);
-		}
-		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
-	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
+	h_free_crq(vdev->unit_address);
 reg_crq_failed:
 	dma_unmap_single(adapter->dev,
 			queue->msg_token,
