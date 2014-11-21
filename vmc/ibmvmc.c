@@ -63,9 +63,19 @@ static struct ibmvmc_hmc hmcs[MAX_HMCS];
 static struct crq_server_adapter ibmvmc_adapter;
 static dev_t ibmvmc_chrdev;
 
+static int ibmvmc_max_buf_pool_size = DEFAULT_BUF_POOL_SIZE;
+static int ibmvmc_max_hmcs = DEFAULT_HMCS;
+static int ibmvmc_max_mtu = DEFAULT_MTU;
+
 /* Module parameters */
 module_param_named(log_level, ibmvmc_log_level, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(log_level, "Log level");
+module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(buf_pool_size, "Buffer pool size");
+module_param_named(max_hmcs, ibmvmc_max_hmcs, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(max_hmcs, "Max HMCs");
+module_param_named(max_mtu, ibmvmc_max_mtu, int, S_IRUGO | S_IWUSR);
+MODULE_PARM_DESC(max_mtu, "Max MTU");
 
 
 static inline long h_copy_rdma(s64 length,
@@ -249,7 +259,7 @@ static struct ibmvmc_buffer * get_valid_hmc_buffer_locked(u8 hmc_index)
 
 	buffer = hmcs[hmc_index].buffer;
 
-	for(i=0; i<MAX_BUF_POOL_SIZE; i++) {
+	for(i=0; i<ibmvmc_max_buf_pool_size; i++) {
 		if((buffer[i].valid) && (buffer[i].free) &&
 		   (buffer[i].owner == VMC_BUF_OWNER_ALPHA)) {
 			buffer[i].free = 0;
@@ -275,7 +285,7 @@ static struct ibmvmc_buffer * get_free_hmc_buffer_locked(u8 hmc_index)
 
 	buffer = hmcs[hmc_index].buffer;
 
-	for(i=0; i<MAX_BUF_POOL_SIZE; i++) {
+	for(i=0; i<ibmvmc_max_buf_pool_size; i++) {
 		if((buffer[i].free) && (buffer[i].owner == VMC_BUF_OWNER_ALPHA)) {
 			buffer[i].free = 0;
 			ret_buf = &(buffer[i]);
@@ -313,7 +323,7 @@ static void count_hmc_buffers(u8 hmc_index, unsigned int *valid,
 	buffer = hmcs[hmc_index].buffer;
 	spin_lock_irqsave(&(hmcs[hmc_index].lock), flags);
 
-	for(i=0; i<MAX_BUF_POOL_SIZE; i++) {
+	for(i=0; i<ibmvmc_max_buf_pool_size; i++) {
 		if(buffer[i].valid) {
 			*valid = *valid + 1;
 			if(buffer[i].free) {
@@ -368,7 +378,7 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
 	hmc->queue_tail = 0;
 	hmc->file = NULL;
 	buffer = hmc->buffer;
-	for(i=0; i<MAX_BUF_POOL_SIZE; i++) {
+	for(i=0; i<ibmvmc_max_buf_pool_size; i++) {
 		if(buffer[i].valid) {
 			free_dma_buffer(vdev,
 					    ibmvmc.max_mtu,
@@ -473,9 +483,9 @@ static int ibmvmc_send_capabilities(struct crq_server_adapter *adapter)
 	crq_msg.status = 0;
 	crq_msg.rsvd[0] = 0;
 	crq_msg.rsvd[1] = 0;
-	crq_msg.max_hmc = MAX_HMCS;
-	crq_msg.max_mtu = cpu_to_be32(MAX_MTU);
-	crq_msg.pool_size = cpu_to_be16(MAX_BUF_POOL_SIZE);
+	crq_msg.max_hmc = ibmvmc_max_hmcs;
+	crq_msg.max_mtu = cpu_to_be32(ibmvmc_max_mtu);
+	crq_msg.pool_size = cpu_to_be16(ibmvmc_max_buf_pool_size);
 	crq_msg.crq_size = cpu_to_be16(adapter->queue.size);
 	crq_msg.version = cpu_to_be16(IBMVMC_PROTOCOL_VERSION);
 
@@ -713,7 +723,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 
 	buffer = &(hmc->buffer[hmc->queue_outbound_msgs[hmc->queue_tail]]);
 	hmc->queue_tail++;
-	if(hmc->queue_tail == MAX_BUF_POOL_SIZE)
+	if(hmc->queue_tail == ibmvmc_max_buf_pool_size)
 		hmc->queue_tail = 0;
 	spin_unlock_irqrestore(&(hmc->lock), flags);
 
@@ -1134,7 +1144,7 @@ static int recv_msg(struct crq_server_adapter *adapter, struct crq_msg_ibmvmc *c
 	/* Must be locked because read operates on the same data */
 	hmc->queue_outbound_msgs[hmc->queue_head] = buffer_id;
 	hmc->queue_head++;
-	if(hmc->queue_head == MAX_BUF_POOL_SIZE) {
+	if(hmc->queue_head == ibmvmc_max_buf_pool_size) {
 		hmc->queue_head = 0;
 	}
 	if(hmc->queue_head == hmc->queue_tail) {
@@ -1158,10 +1168,10 @@ static void ibmvmc_process_capabilities(struct crq_msg_ibmvmc *crqp)
 		return;
 	}
 
-	ibmvmc.max_mtu = min((u32) MAX_MTU, be32_to_cpu(crq->max_mtu));
-	ibmvmc.max_buffer_pool_size = min((u16) MAX_BUF_POOL_SIZE,
+	ibmvmc.max_mtu = min((u32) ibmvmc_max_mtu, be32_to_cpu(crq->max_mtu));
+	ibmvmc.max_buffer_pool_size = min((u16) ibmvmc_max_buf_pool_size,
 						(u16) be16_to_cpu(crq->pool_size));
-	ibmvmc.max_hmc_index = min((u8) MAX_HMCS, crq->max_hmc) - 1;
+	ibmvmc.max_hmc_index = min((u8) ibmvmc_max_hmcs, crq->max_hmc) - 1;
 	ibmvmc.state = ibmvmc_state_ready;
 
 	info(LOG_LEVEL_NORM, "capabilites: max_mtu=0x%x, max_buf_pool_size=0x%x, "
@@ -1198,7 +1208,7 @@ static void ibmvmc_reset(void)
 	int i;
 
 	info(LOG_LEVEL_NORM, "*** Reset to initial state.\n");
-	for(i=0; i<MAX_HMCS; i++) {
+	for(i=0; i<ibmvmc_max_hmcs; i++) {
 		if(hmcs[i].state != ibmhmc_state_free) {
 			ibmvmc_return_hmc(&hmcs[i]);
 		}
@@ -1578,6 +1588,35 @@ static struct vio_driver ibmvmc_driver = {
 	.remove      = ibmvmc_remove,
 };
 
+static void __init ibmvmc_scrub_module_parms(void)
+{
+	/* don't care about log_level */
+
+	if(ibmvmc_max_mtu > MAX_MTU) {
+		warn("Max MTU reduced to %d\n", MAX_MTU);
+		ibmvmc_max_mtu = MAX_MTU;
+	} else if(ibmvmc_max_mtu < MIN_MTU) {
+		warn("Max MTU increased to %d\n", MIN_MTU);
+		ibmvmc_max_mtu = MIN_MTU;
+	}
+
+	if(ibmvmc_max_buf_pool_size > MAX_BUF_POOL_SIZE) {
+		warn("Max buffer pool size reduced to %d\n", MAX_BUF_POOL_SIZE);
+		ibmvmc_max_buf_pool_size = MAX_BUF_POOL_SIZE;
+	} else if(ibmvmc_max_buf_pool_size < MIN_BUF_POOL_SIZE) {
+		warn("Max buffer pool size increased to %d\n", MIN_BUF_POOL_SIZE);
+		ibmvmc_max_buf_pool_size = MIN_BUF_POOL_SIZE;
+	}
+
+	if(ibmvmc_max_hmcs > MAX_HMCS) {
+		warn("Max HMCs reduced to %d\n", MAX_HMCS);
+		ibmvmc_max_hmcs = MAX_HMCS;
+	} else if(ibmvmc_max_hmcs < MIN_HMCS) {
+		warn("Max HMCs increased to %d\n", MIN_HMCS);
+		ibmvmc_max_hmcs = MIN_HMCS;
+	}
+}
+
 static int __init ibmvmc_module_init(void)
 {
 	int rc, i, j;
@@ -1604,13 +1643,16 @@ static int __init ibmvmc_module_init(void)
 		}
 	}
 
+	/* Sanity check module parms */
+	ibmvmc_scrub_module_parms();
+
 	/*
 	 * Initialize some reasonable values.  Might be negotiated smaller values
 	 * during the capabilities exchange.
 	 */
-	ibmvmc.max_mtu = MAX_MTU;
-	ibmvmc.max_buffer_pool_size = MAX_BUF_POOL_SIZE;
-	ibmvmc.max_hmc_index = MAX_HMCS - 1;
+	ibmvmc.max_mtu = ibmvmc_max_mtu;
+	ibmvmc.max_buffer_pool_size = ibmvmc_max_buf_pool_size;
+	ibmvmc.max_hmc_index = ibmvmc_max_hmcs - 1;
 
 	/* Once cdev_add is complete, apps can start trying to use the vmc.
 	 * They will get EBUSY on open until after the probe has completed.
