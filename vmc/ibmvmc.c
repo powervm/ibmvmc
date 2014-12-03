@@ -376,7 +376,6 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
 	hmc->state = ibmhmc_state_free;
 	hmc->queue_head = 0;
 	hmc->queue_tail = 0;
-	hmc->file = NULL;
 	buffer = hmc->buffer;
 	for(i=0; i<ibmvmc_max_buf_pool_size; i++) {
 		if(buffer[i].valid) {
@@ -583,49 +582,16 @@ static int send_msg(struct crq_server_adapter *adapter,
 static int ibmvmc_open(struct inode *inode, struct file *file)
 {
 	int retval = 0;
-	unsigned long index = 0;
-	struct ibmvmc_hmc *hmc;
-	unsigned int valid = 0, free = 0;
+	struct ibmvmc_file_session *session;
 
-	info(LOG_LEVEL_NORM, "vmc_open:  inode = 0x%lx, file = 0x%lx, "
+	info(LOG_LEVEL_NORM, "ibmvmc_open: inode = 0x%lx, file = 0x%lx, "
 			"state = 0x%x\n", (unsigned long)inode,
 			(unsigned long)file, ibmvmc.state);
 
-	if(ibmvmc.state == ibmvmc_state_failed) {
-		warn("vmc_open: state_failed\n");
-		return -EIO;
-	}
-
-	if(ibmvmc.state < ibmvmc_state_ready) {
-		warn("vmc_open: not state_ready\n");
-		return -EBUSY;
-	}
-
-	/* Device is busy until capabilities have been exchanged and we
-	 * have a generic buffer for each possible HMC connection.
-	 */
-	for(index = 0; index <= ibmvmc.max_hmc_index; index++) {
-		valid = 0;
-		count_hmc_buffers(index, &valid, &free);
-		if(valid == 0) {
-			warn("vmc_open: buffers not ready for index %ld\n", index);
-			return -EBUSY;
-		}
-	}
-
-	/* Get an hmc object, and transition to ibmhmc_state_initial */
-	hmc = ibmvmc_get_free_hmc();
-	if(hmc == NULL) {
-		warn("vmc_open: free hmc not found\n");
-		return -EIO;
-	}
-
-	hmc->session = hmc->session+1;
-	if(hmc->session == 0xff) hmc->session = 1;
-
-	file->private_data = hmc;
-	hmc->adapter = &ibmvmc_adapter;
-	hmc->file = file;
+	session = (struct ibmvmc_file_session *)kzalloc(
+			sizeof(struct ibmvmc_file_session), GFP_KERNEL);
+	session->file = file;
+	file->private_data = session;
 
 	return retval;
 }
@@ -633,33 +599,35 @@ static int ibmvmc_open(struct inode *inode, struct file *file)
 static int ibmvmc_close(struct inode *inode, struct file *file)
 {
 	int rc = 0;
-	struct crq_server_adapter *adapter;
+	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
 
-	info(LOG_LEVEL_NORM, "close:  file = 0x%lx, state = 0x%x\n",
+	info(LOG_LEVEL_NORM, "ibmvmc_close:  file = 0x%lx, state = 0x%x\n",
 	     (unsigned long)file, ibmvmc.state);
 
-	hmc = file->private_data;
-	if(!hmc)
-		return -EIO;
-
-	adapter = hmc->adapter;
-	if(!adapter)
-		return -EIO;
-
-	if(ibmvmc.state == ibmvmc_state_failed) {
-		warn("close: state_failed\n");
+	session = file->private_data;
+	if(!session) {
 		return -EIO;
 	}
 
-	if(ibmvmc.state < ibmvmc_state_ready) {
-		warn("close: not state_ready\n");
-		return -EBUSY;
-	}
+	hmc = session->hmc;
+	if(hmc) {
+		if(!hmc->adapter) {
+			return -EIO;
+		}
 
-	rc = send_close(hmc);
-	if(rc) {
-		warn("close: send_close failed.\n");
+		if(ibmvmc.state == ibmvmc_state_failed) {
+			warn("close: state_failed\n");
+			return -EIO;
+		}
+
+		// TODO locking?
+		if(hmc->state >= ibmhmc_state_opening) {
+			rc = send_close(hmc);
+			if(rc) {
+				warn("close: send_close failed.\n");
+			}
+		}
 	}
 
 	return rc;
@@ -669,6 +637,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 {
 	DECLARE_WAITQUEUE(wait, current);
 	ssize_t	n;
+	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
 	struct crq_server_adapter *adapter;
 	struct ibmvmc_buffer *buffer;
@@ -685,7 +654,12 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 		return -EINVAL;
 	}
 
-	hmc = file->private_data;
+	session = file->private_data;
+	if(!session) {
+		return -EIO;
+	}
+
+	hmc = session->hmc;
 	if(!hmc) {
 		warn("read: no hmc\n");
 		return -EIO;
@@ -745,11 +719,18 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes, loff_t *
 static unsigned int ibmvmc_poll(struct file *file, poll_table *wait)
 {
 	unsigned int mask = 0;
+	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
 
-	hmc = file->private_data;
-	if(!hmc)
+	session = file->private_data;
+	if(!session) {
 		return 0;
+	}
+
+	hmc = session->hmc;
+	if(!hmc) {
+		return 0;
+	}
 
 	poll_wait(file, &ibmvmc_read_wait, wait);
 
@@ -769,13 +750,20 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	size_t		c = count;
 	struct ibmvmc_buffer *vmc_buffer;
 	unsigned char *buf;
+	struct ibmvmc_file_session *session;
 	struct crq_server_adapter *adapter;
 	struct ibmvmc_hmc *hmc;
 	unsigned long flags;
 
-	hmc = file->private_data;
-	if(!hmc)
+	session = file->private_data;
+	if(!session) {
 		return -EIO;
+	}
+
+	hmc = session->hmc;
+	if(!hmc) {
+		return -EIO;
+	}
 
 	spin_lock_irqsave(&(hmc->lock), flags);
 	if(hmc->state == ibmhmc_state_free) {
@@ -855,70 +843,148 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	return (ssize_t)(ret);
 }
 
-static long ibmvmc_ioctl(struct file *file,
-	  unsigned int cmd, unsigned long arg)
+static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 {
-	struct ibmvmc_buffer *buffer;
-	size_t bytes;
 	struct ibmvmc_hmc *hmc;
-	long rc = 0;
-	int cnt_buffers[2], n;
-	char print_buffer[HMC_ID_LEN+1];
-	unsigned long flags;
+	unsigned int valid, free, index;
 
-	hmc = file->private_data;
-	info(LOG_LEVEL_TRACE, "ioctl: file=0x%lx, cmd=0x%x, arg=0x%lx, hmc=0x%lx\n",
-	     (unsigned long) file, cmd,
-	     arg, (unsigned long) hmc);
-
-	if(!hmc) {
-		warn("ioctl: no hmc\n");
+	if(ibmvmc.state == ibmvmc_state_failed) {
+		warn("Reserve HMC: state_failed\n");
 		return -EIO;
 	}
 
-	if(hmc->state == ibmhmc_state_free || hmc->state == ibmhmc_state_failed) {
+	if(ibmvmc.state < ibmvmc_state_ready) {
+		warn("Reserve HMC: not state_ready\n");
+		return -EBUSY;
+	}
+
+	/* Device is busy until capabilities have been exchanged and we
+	 * have a generic buffer for each possible HMC connection.
+	 */
+	for(index = 0; index <= ibmvmc.max_hmc_index; index++) {
+		valid = 0;
+		count_hmc_buffers(index, &valid, &free);
+		if(valid == 0) {
+			warn("Reserve HMC: buffers not ready for index %d\n", index);
+			return -EBUSY;
+		}
+	}
+
+	/* Get an hmc object, and transition to ibmhmc_state_initial */
+	hmc = ibmvmc_get_free_hmc();
+	if(hmc == NULL) {
+		warn("vmc_open: free hmc not found\n");
+		return -EIO;
+	}
+
+	hmc->session = hmc->session+1;
+	if(hmc->session == 0xff) {
+		hmc->session = 1;
+	}
+
+	session->hmc = hmc;
+	hmc->adapter = &ibmvmc_adapter;
+
+	return 0;
+}
+
+static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
+		unsigned long arg)
+{
+	struct ibmvmc_hmc *hmc;
+	struct ibmvmc_buffer *buffer;
+	size_t bytes;
+	char print_buffer[HMC_ID_LEN+1];
+	unsigned long flags;
+	long rc = 0;
+
+	/* Reserve HMC session */
+	hmc = session->hmc;
+	if(!hmc) {
+		rc = ibmvmc_setup_hmc(session);
+		if(rc) {
+			return rc;
+		}
+		hmc = session->hmc;
+		if(!hmc) {
+			err("setup_hmc returned success but no hmc\n");
+			return -EIO;
+		}
+	}
+
+	/* Send Open Session command */
+	spin_lock_irqsave(&(hmc->lock), flags);
+	buffer = get_valid_hmc_buffer_locked(hmc->index);
+	spin_unlock_irqrestore(&(hmc->lock), flags);
+
+	if(buffer == NULL || (buffer->real_addr_local == NULL)) {
+		warn("ioctl: no buffer available\n");
+		return -EIO;
+	}
+
+	if(hmc->state != ibmhmc_state_initial) {
+		warn("ioctl: invalid state to send open message 0x%x\n",
+				hmc->state);
+		return -EIO;
+	}
+
+	bytes = copy_from_user(hmc->hmc_id, (void *) arg, HMC_ID_LEN);
+	if(bytes) {
+		return -EFAULT;
+	}
+
+	/* Make sure buffer is NULL terminated before trying to print it */
+	memset(print_buffer, 0, HMC_ID_LEN+1);
+	strncpy(print_buffer, hmc->hmc_id, HMC_ID_LEN);
+	info(LOG_LEVEL_NORM, "ioctl: Set HMC ID: \"%s\"\n", print_buffer);
+
+	memcpy(buffer->real_addr_local, hmc->hmc_id, HMC_ID_LEN);
+	/* RDMA over ID, send open msg, change state to ibmhmc_state_opening */
+	rc = send_open(buffer, hmc);
+
+	return rc;
+}
+
+static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
+		unsigned long arg)
+{
+	size_t bytes;
+	struct ibmvmc_ioctl_query_struct query_struct;
+
+	memset(&query_struct, 0, sizeof(query_struct));
+	query_struct.have_vmc = (ibmvmc.state > ibmvmc_state_initial);
+	query_struct.state = ibmvmc.state;
+
+	bytes = copy_to_user((void *) arg, &query_struct, sizeof(query_struct));
+	if(bytes) {
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+static long ibmvmc_ioctl(struct file *file,
+	  unsigned int cmd, unsigned long arg)
+{
+	struct ibmvmc_file_session *session;
+	long rc = 0;
+
+	session = file->private_data;
+	info(LOG_LEVEL_TRACE, "ioctl: file=0x%lx, cmd=0x%x, arg=0x%lx, session=0x%lx\n",
+	     (unsigned long) file, cmd,
+	     arg, (unsigned long) session);
+
+	if(!session) {
+		warn("ioctl: no session\n");
 		return -EIO;
 	}
 
 	switch (cmd) {
 	case VMC_IOCTL_SETHMCID:
-		spin_lock_irqsave(&(hmc->lock), flags);
-		buffer = get_valid_hmc_buffer_locked(hmc->index);
-		spin_unlock_irqrestore(&(hmc->lock), flags);
-
-		if(buffer == NULL || (buffer->real_addr_local == NULL)) {
-			warn("ioctl: no buffer available\n");
-			return -EIO;
-		}
-
-		if(hmc->state != ibmhmc_state_initial) {
-			warn("ioctl: invalid state to send open message 0x%x\n",
-			     hmc->state);
-			return -EIO;
-		}
-
-		bytes = copy_from_user(hmc->hmc_id, (void *) arg, HMC_ID_LEN);
-		if(bytes) {
-			return -EFAULT;
-		}
-
-		/* Make sure buffer is NULL terminated before trying to print it */
-		memset(print_buffer, 0, HMC_ID_LEN+1);
-		strncpy(print_buffer, hmc->hmc_id, HMC_ID_LEN);
-		info(LOG_LEVEL_NORM, "ioctl: Set HMC ID: \"%s\"\n", print_buffer);
-
-		memcpy(buffer->real_addr_local, hmc->hmc_id, HMC_ID_LEN);
-		/* RDMA over ID, send open msg, change state to ibmhmc_state_opening */
-		rc = send_open(buffer, hmc);
+		rc = ibmvmc_ioctl_sethmcid(session, arg);
 		break;
-	case VMC_IOCTL_DEBUG:
-		count_hmc_buffers(hmc->index, &cnt_buffers[0], &cnt_buffers[1]);
-		info(LOG_LEVEL_TRACE, "ioctl: debug - alloc buffs 0x%x, "
-				"avail buffs 0x%x\n", cnt_buffers[0], cnt_buffers[1]);
-		n = copy_to_user((void *) arg, cnt_buffers, 8);
-		if (!n) {
-			return -EFAULT;
-		}
+	case VMC_IOCTL_QUERY:
+		rc = ibmvmc_ioctl_query(session, arg);
 		break;
 	default:
 		warn("ibmvmc: unknown ioctl 0x%x\n", cmd);

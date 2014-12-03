@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <string.h>
 
 // Other includes
 #ifndef _HVHMCLESSCMD_H
@@ -52,15 +53,31 @@ int readMessage(int fd, HvHmcLessCmd *inbound)
     return 0;
 }
 
-void checkBuffers(int fd)
+struct vmc_query_struct
 {
-    uint32 vmc_buffer_count[2];
-    int rc = ioctl(fd, 2, vmc_buffer_count);
-    if (rc == -1) {
-        cout << "VMC Buffers ioctl failed errno" << errno << "  " << perror << endl;
-    } else {
-        cout << "VMC Buffers: valid = " << vmc_buffer_count[0] << " free = " << vmc_buffer_count[1] << endl;
+    int have_vmc;
+    int state;
+};
+
+int query(int fd, int &have_vmc)
+{
+    int rc = 0;
+    struct vmc_query_struct query_struct;
+    memset(&query_struct, 0, sizeof(query_struct));
+
+    do {
+        rc = ioctl(fd, 2, &query_struct);
+        cout << "ioctl called: rc=" << rc << endl;
+    } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
+
+    cout << "query_struct: have_vmc=" << query_struct.have_vmc
+	<< " state=" << query_struct.state << endl;
+
+    if (!rc) {
+	have_vmc = query_struct.have_vmc;
     }
+
+    return rc;
 }
 
 int main(int argc, char *argv[])
@@ -69,6 +86,7 @@ int main(int argc, char *argv[])
     int loopcount = 100;
     int fd;
     int rc;
+    int have_vmc;
     HvHmcLessCmd* inbound;
     HvHmcLessCmd* outbound;
     char hmc_id[32] = "hmcless id";
@@ -85,6 +103,17 @@ int main(int argc, char *argv[])
         exit (1);
     }
     cout << "open complete" << endl;
+
+    rc = query(fd, have_vmc);
+    if (rc == -1) {
+	cout << "error querying state" << endl;
+	exit(1);
+    }
+
+    if (!have_vmc) {
+	cout << "No VMC.  Done." << endl;
+	exit(1);
+    }
 
     do {
         rc = ioctl(fd, 1, hmc_id);
