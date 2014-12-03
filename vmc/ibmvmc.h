@@ -40,7 +40,7 @@
 #define VMC_INVALID_BUFFER_ID 0xFFFF
 
 #define VMC_IOCTL_SETHMCID 1
-#define VMC_IOCTL_DEBUG    2
+#define VMC_IOCTL_QUERY    2
 
 #define VMC_MSG_CAP          0x01
 #define VMC_MSG_CAP_RESP     0x81
@@ -160,13 +160,22 @@ struct ibmvmc_hmc {
 	u8 session;
 	u8 index;
 	u32 state;
-	struct file *file;
 	struct crq_server_adapter *adapter;
 	spinlock_t lock;
 	unsigned char hmc_id[HMC_ID_LEN];
 	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
 	unsigned short queue_outbound_msgs[MAX_BUF_POOL_SIZE];
 	int queue_head, queue_tail;
+};
+
+struct ibmvmc_file_session {
+	struct file *file;
+	struct ibmvmc_hmc *hmc;
+};
+
+struct ibmvmc_ioctl_query_struct {
+	int have_vmc;
+	int state;
 };
 
 #endif
