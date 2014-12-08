@@ -630,6 +630,8 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 		}
 	}
 
+	kzfree(session);
+
 	return rc;
 }
 
