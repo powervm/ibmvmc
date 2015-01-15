@@ -31,7 +31,7 @@
 #define MIN_MTU           4096
 #define MAX_BUF_POOL_SIZE 64
 #define MAX_HMCS          2
-#define MAX_MTU           4*4096
+#define MAX_MTU           (4*4096)
 #define DEFAULT_BUF_POOL_SIZE 32
 #define DEFAULT_HMCS          1
 #define DEFAULT_MTU           4096
@@ -73,11 +73,20 @@ enum ibmvmc_states {
 };
 
 enum ibmhmc_states {
-	ibmhmc_state_free    = 0, /* HMC connection not established                 */
-	ibmhmc_state_initial = 1, /* HMC connection established, due to open() call */
-	ibmhmc_state_opening = 2, /* open msg sent to HV, due to ioctl(1) call      */
-	ibmhmc_state_ready   = 3, /* HMC connection ready, open resp msg from HV    */
-	ibmhmc_state_failed  = 4, /* HMC connection failure                         */
+	/* HMC connection not established */
+	ibmhmc_state_free    = 0,
+
+	/* HMC connection established (open called) */
+	ibmhmc_state_initial = 1,
+
+	/* open msg sent to HV, due to ioctl(1) call */
+	ibmhmc_state_opening = 2,
+
+	/* HMC connection ready, open resp msg from HV */
+	ibmhmc_state_ready   = 3,
+
+	/* HMC connection failure */
+	ibmhmc_state_failed  = 4,
 };
 
 struct ibmvmc_buffer {
