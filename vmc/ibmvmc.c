@@ -845,7 +845,7 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 
 	if (ibmvmc.state < ibmvmc_state_ready) {
 		pr_warn("ibmvmc: Reserve HMC: not state_ready\n");
-		return -EBUSY;
+		return -EAGAIN;
 	}
 
 	/* Device is busy until capabilities have been exchanged and we
@@ -857,7 +857,7 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 		if (valid == 0) {
 			pr_warn("ibmvmc: buffers not ready for index %d\n",
 					index);
-			return -EBUSY;
+			return -EAGAIN;
 		}
 	}
 
@@ -865,7 +865,7 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 	hmc = ibmvmc_get_free_hmc();
 	if (hmc == NULL) {
 		pr_warn("ibmvmc_setup_hmc: free hmc not found\n");
-		return -EIO;
+		return -EBUSY;
 	}
 
 	hmc->session = hmc->session+1;
