@@ -580,7 +580,7 @@ static int ibmvmc_open(struct inode *inode, struct file *file)
 	int retval = 0;
 	struct ibmvmc_file_session *session;
 
-	pr_info("ibmvmc_open: inode = 0x%lx, file = 0x%lx, state = 0x%x\n",
+	pr_debug("ibmvmc_open: inode = 0x%lx, file = 0x%lx, state = 0x%x\n",
 			(unsigned long)inode, (unsigned long)file,
 			ibmvmc.state);
 
@@ -597,7 +597,7 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
 
-	pr_info("ibmvmc_close:  file = 0x%lx, state = 0x%x\n",
+	pr_debug("ibmvmc_close: file = 0x%lx, state = 0x%x\n",
 	     (unsigned long)file, ibmvmc.state);
 
 	session = file->private_data;
