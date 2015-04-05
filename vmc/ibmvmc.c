@@ -820,8 +820,8 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	if (p == buffer)
 		goto out;
 
-	file->f_dentry->d_inode->i_mtime = CURRENT_TIME;
-	mark_inode_dirty(file->f_dentry->d_inode);
+	file->f_path.dentry->d_inode->i_mtime = CURRENT_TIME;
+	mark_inode_dirty(file->f_path.dentry->d_inode);
 
 	pr_debug("ibmvmc: write: file = 0x%lx, count = 0x%lx\n",
 	     (unsigned long)file, (unsigned long)count);
