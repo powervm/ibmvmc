@@ -1,8 +1,9 @@
 /* TODO - update this header
  * IBM PowerPC Virtual Communications Channel Support.
  *
- *    Copyright (c) 2014 IBM Corp.
+ *    Copyright (c) 2014, 2015 IBM Corp.
  *     Steven Royer seroyer@us.ibm.com
+ *     Adam Reznechek adreznec@linux.vnet.ibm.com
  *
  *      This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License
@@ -39,8 +40,13 @@
 
 #define VMC_INVALID_BUFFER_ID 0xFFFF
 
-#define VMC_IOCTL_SETHMCID 1
-#define VMC_IOCTL_QUERY    2
+#define VMC_NUM_MINORS	1
+
+/* ioctl numbers */
+#define VMC_BASE		0xCC
+#define VMC_IOCTL_SETHMCID	_IOW(VMC_BASE, 0x00, unsigned char *)
+#define VMC_IOCTL_QUERY		_IOR(VMC_BASE, 0x01, struct ibmvmc_ioctl_query_struct)
+#define VMC_IOCTL_REQUESTVMC	_IOR(VMC_BASE, 0x02, u32)
 
 #define VMC_MSG_CAP          0x01
 #define VMC_MSG_CAP_RESP     0x81
@@ -63,6 +69,9 @@
 
 #define VMC_BUF_OWNER_ALPHA 0
 #define VMC_BUF_OWNER_HV    1
+
+/* TODO(adreznec) Remove when H_REQUEST_VMC added to hvcall.h */
+#define H_REQUEST_VMC           0x360
 
 enum ibmvmc_states {
 	ibmvmc_state_initial      = 0,
@@ -162,6 +171,7 @@ struct ibmvmc_struct {
 	u32 max_hmc_index;
 	struct crq_server_adapter *adapter;
 	struct cdev cdev;
+	u32 vmc_drc_index;
 };
 
 /* Connection specific settings */
@@ -185,6 +195,7 @@ struct ibmvmc_file_session {
 struct ibmvmc_ioctl_query_struct {
 	int have_vmc;
 	int state;
+	int vmc_drc_index;
 };
 
 #endif
