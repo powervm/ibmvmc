@@ -1,9 +1,10 @@
 /* TODO - update this header
  * IBM PowerPC Virtual Communications Channel Support.
  *
- *    Copyright (c) 2004 IBM Corp.
+ *    Copyright (c) 2004, 2015 IBM Corp.
  *     Dave Engebretsen engebret@us.ibm.com
  *     Steven Royer seroyer@us.ibm.com
+ *     Adam Reznechek adreznec@linux.vnet.ibm.com
  *
  *      This program is free software; you can redistribute it and/or
  *      modify it under the terms of the GNU General Public License
@@ -93,6 +94,32 @@ static inline void h_free_crq(uint32_t unit_address)
 
 		rc = plpar_hcall_norets(H_FREE_CRQ, unit_address);
 	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
+}
+
+/**
+ * h_request_vmc: - request a hypervisor virtual management channel device
+ * @vmc_index: drc index of the vmc device created
+ *
+ * Requests the hypervisor create a new virtual management channel device,
+ * allowing this partition to send hypervisor virtualization control commands.
+ *
+ */
+static inline long h_request_vmc(u32 *vmc_index)
+{
+	long rc = 0;
+	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
+
+	do {
+		if (H_IS_LONG_BUSY(rc))
+			msleep(get_longbusy_msecs(rc));
+
+		/* Call to request the VMC device from phyp */
+		rc = plpar_hcall(H_REQUEST_VMC, retbuf);
+		pr_debug("ibmvmc: h_request_vmc rc = 0x%lx\n", rc);
+		*vmc_index = retbuf[0];
+	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
+
+	return rc;
 }
 
 /* routines for managing a command/response queue */
@@ -879,7 +906,7 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 }
 
 static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
-		unsigned long arg)
+		unsigned char __user *new_hmc_id)
 {
 	struct ibmvmc_hmc *hmc;
 	struct ibmvmc_buffer *buffer;
@@ -918,7 +945,7 @@ static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 		return -EIO;
 	}
 
-	bytes = copy_from_user(hmc->hmc_id, (void *)arg, HMC_ID_LEN);
+	bytes = copy_from_user(hmc->hmc_id, new_hmc_id, HMC_ID_LEN);
 	if (bytes)
 		return -EFAULT;
 
@@ -935,7 +962,7 @@ static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 }
 
 static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
-		unsigned long arg)
+		struct ibmvmc_ioctl_query_struct __user *ret_struct)
 {
 	size_t bytes;
 	struct ibmvmc_ioctl_query_struct query_struct;
@@ -943,21 +970,66 @@ static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
 	memset(&query_struct, 0, sizeof(query_struct));
 	query_struct.have_vmc = (ibmvmc.state > ibmvmc_state_initial);
 	query_struct.state = ibmvmc.state;
+	query_struct.vmc_drc_index = ibmvmc.vmc_drc_index;
 
-	bytes = copy_to_user((void *)arg, &query_struct, sizeof(query_struct));
+	bytes = copy_to_user(ret_struct, &query_struct,
+			sizeof(query_struct));
 	if (bytes)
 		return -EFAULT;
 
 	return 0;
 }
 
+static long ibmvmc_ioctl_requestvmc(struct ibmvmc_file_session *session,
+		u32 __user *ret_vmc_index)
+{
+	/* TODO: (adreznec) Add locking to control access by multiple processes */
+	size_t bytes;
+	long rc;
+	u32 vmc_drc_index;
+
+	/* Call to request the VMC device from phyp*/
+	rc = h_request_vmc(&vmc_drc_index);
+	pr_debug("ibmvmc: requestvmc: H_REQUEST_VMC rc = 0x%lx\n", rc);
+
+	if (rc == H_SUCCESS) {
+		rc = 0;
+	} else if (rc == H_FUNCTION) {
+		pr_warn("ibmvmc: requestvmc: h_request_vmc not supported\n");
+		return -EPERM;
+	} else if (rc == H_AUTHORITY) {
+		pr_warn("ibmvmc: requestvmc: hypervisor denied vmc request\n");
+		return -EPERM;
+	} else if (rc == H_HARDWARE) {
+		pr_warn("ibmvmc: requestvmc: hypervisor hardware fault\n");
+		return -EIO;
+	} else if (rc == H_RESOURCE) {
+		pr_debug("ibmvmc: requestvmc: vmc resource unavailable\n");
+		return -EAGAIN;
+	} else if (rc == H_NOT_AVAILABLE) {
+		pr_warn("ibmvmc: requestvmc: system cannot be vmc managed\n");
+		return -EPERM;
+	} else if (rc == H_PARAMETER) {
+		return -EINVAL;
+	}
+
+	/* Success, set the vmc index in global struct */
+	ibmvmc.vmc_drc_index = vmc_drc_index;
+
+	bytes = copy_to_user(ret_vmc_index, &vmc_drc_index,
+			sizeof(*ret_vmc_index));
+	if (bytes) {
+		pr_warn("ibmvmc: requestvmc: copy to user failed.\n");
+		return -EFAULT;
+	}
+	return rc;
+}
+
 static long ibmvmc_ioctl(struct file *file,
 	  unsigned int cmd, unsigned long arg)
 {
-	struct ibmvmc_file_session *session;
-	long rc = 0;
+	struct ibmvmc_file_session *session = file->private_data;
 
-	session = file->private_data;
 	pr_debug("ibmvmc: ioctl file=0x%lx, cmd=0x%x, arg=0x%lx, ses=0x%lx\n",
 			(unsigned long) file, cmd, arg,
 			(unsigned long) session);
@@ -969,17 +1041,15 @@ static long ibmvmc_ioctl(struct file *file,
 
 	switch (cmd) {
 	case VMC_IOCTL_SETHMCID:
-		rc = ibmvmc_ioctl_sethmcid(session, arg);
-		break;
+		return ibmvmc_ioctl_sethmcid(session, (unsigned char __user *)arg);
 	case VMC_IOCTL_QUERY:
-		rc = ibmvmc_ioctl_query(session, arg);
-		break;
+		return ibmvmc_ioctl_query(session, (struct ibmvmc_ioctl_query_struct __user *)arg);
+	case VMC_IOCTL_REQUESTVMC:
+		return ibmvmc_ioctl_requestvmc(session, (unsigned int __user *)arg);
 	default:
 		pr_warn("ibmvmc: unknown ioctl 0x%x\n", cmd);
 		return -EINVAL;
 	}
-
-	return rc;
 }
 
 static const struct file_operations ibmvmc_fops = {
@@ -1690,8 +1760,8 @@ static int __init ibmvmc_module_init(void)
 	ibmvmc.state = ibmvmc_state_initial;
 	pr_info("ibmvmc: version %s\n", IBMVMC_DRIVER_VERSION);
 
-	/* Dynamically allocate major number */
-	if (alloc_chrdev_region(&ibmvmc_chrdev, 0, 1, ibmvmc_driver_name)) {
+	/* Dynamically allocate ibmvmc major number */
+	if (alloc_chrdev_region(&ibmvmc_chrdev, 0, VMC_NUM_MINORS, ibmvmc_driver_name)) {
 		pr_err("ibmvmc: unable to allocate a dev_t\n");
 		rc = -EIO;
 		goto alloc_chrdev_failed;
@@ -1725,7 +1795,7 @@ static int __init ibmvmc_module_init(void)
 	cdev_init(&ibmvmc.cdev, &ibmvmc_fops);
 	ibmvmc.cdev.owner = THIS_MODULE;
 	ibmvmc.cdev.ops = &ibmvmc_fops;
-	rc = cdev_add(&ibmvmc.cdev, ibmvmc_chrdev, 1);
+	rc = cdev_add(&ibmvmc.cdev, ibmvmc_chrdev, VMC_NUM_MINORS);
 	if (rc) {
 		pr_err("ibmvmc: unable to add cdev: %d\n", rc);
 		goto cdev_add_failed;
@@ -1743,7 +1813,7 @@ static int __init ibmvmc_module_init(void)
 vio_reg_failed:
 	cdev_del(&ibmvmc.cdev);
 cdev_add_failed:
-	unregister_chrdev_region(ibmvmc_chrdev, 1);
+	unregister_chrdev_region(ibmvmc_chrdev, VMC_NUM_MINORS);
 alloc_chrdev_failed:
 	return rc;
 }
@@ -1753,7 +1823,7 @@ static void __exit ibmvmc_module_exit(void)
 	pr_info("ibmvmc_module_exit\n");
 	vio_unregister_driver(&ibmvmc_driver);
 	cdev_del(&ibmvmc.cdev);
-	unregister_chrdev_region(ibmvmc_chrdev, 1);
+	unregister_chrdev_region(ibmvmc_chrdev, VMC_NUM_MINORS);
 }
 
 module_init(ibmvmc_module_init);

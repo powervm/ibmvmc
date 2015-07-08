@@ -16,6 +16,12 @@
     #include "HvHmcLessCmd.H"
 #endif
 
+/* ioctl numbers */
+#define VMC_BASE		0xCC
+#define VMC_IOCTL_SETHMCID      _IOW(VMC_BASE, 0x00, unsigned char *)
+#define VMC_IOCTL_QUERY         _IOR(VMC_BASE, 0x01, struct ibmvmc_ioctl_query_struct)
+#define VMC_IOCTL_REQUESTVMC    _IOR(VMC_BASE, 0x02, unsigned int)
+
 using namespace std;
 
 /** Return zero on success */
@@ -53,25 +59,51 @@ int readMessage(int fd, HvHmcLessCmd *inbound)
     return 0;
 }
 
-struct vmc_query_struct
+
+int request_vmc(int fd)
+{
+    int rc = 0;
+    int vmc_index = 0;
+
+    do {
+        rc = ioctl(fd, VMC_IOCTL_REQUESTVMC, &vmc_index);
+        cout << "requestvmc ioctl called: rc=" << rc << endl;
+    } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
+
+    if (rc == -1) {
+	cout << "vmc request failed errno: " << errno << "  " << perror << endl;
+    }
+
+    cout << "vmc_index=" << vmc_index << endl;
+
+    return rc;
+};
+
+struct ibmvmc_ioctl_query_struct
 {
     int have_vmc;
     int state;
+    int vmc_drc_index;
 };
 
 int query(int fd, int &have_vmc)
 {
     int rc = 0;
-    struct vmc_query_struct query_struct;
+    struct ibmvmc_ioctl_query_struct query_struct;
     memset(&query_struct, 0, sizeof(query_struct));
 
     do {
-        rc = ioctl(fd, 2, &query_struct);
-        cout << "ioctl called: rc=" << rc << endl;
+        rc = ioctl(fd, VMC_IOCTL_QUERY, &query_struct);
+        cout << "query ioctl called: rc=" << rc << endl;
     } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
 
+    if (rc == -1) {
+	    cout << "query ioctl failed errno: " << errno << "  " << perror << endl;
+    }
+
     cout << "query_struct: have_vmc=" << query_struct.have_vmc
-	<< " state=" << query_struct.state << endl;
+	<< " state=" << query_struct.state
+	<< " vmc_drc_index=" << query_struct.vmc_drc_index << endl;
 
     if (!rc) {
 	have_vmc = query_struct.have_vmc;
@@ -104,20 +136,38 @@ int main(int argc, char *argv[])
     }
     cout << "open complete" << endl;
 
+    // Perform initial query for VMC
     rc = query(fd, have_vmc);
     if (rc == -1) {
 	cout << "error querying state" << endl;
 	exit(1);
     }
 
+    // If no VMC found, try and request one from phyp
     if (!have_vmc) {
-	cout << "No VMC.  Done." << endl;
-	exit(1);
+	rc = request_vmc(fd);
+	if (rc == -1) {
+		cout << "error requesting vmc" << endl;
+		exit(1);
+	}
+
+	// TODO: DLPAR add the VMC device here
+	// Requery to check for VMC
+	rc = query(fd, have_vmc);
+	if (rc == -1) {
+	    cout << "error querying state" << endl;
+	    exit(1);
+	}
+	// Fail out if VMC still not available
+	if (!have_vmc) {
+	    cout << "No VMC.  Done." << endl;
+	    exit(1);
+	}
     }
 
     do {
-        rc = ioctl(fd, 1, hmc_id);
-        cout << "ioctl called: rc=" << rc << endl;
+        rc = ioctl(fd, VMC_IOCTL_SETHMCID, hmc_id);
+        cout << "sethmcid ioctl called: rc=" << rc << endl;
     } while ((rc == -1) && ((errno == EBUSY) || (errno == EAGAIN)));
 
     if (rc == -1) {
