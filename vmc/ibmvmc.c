@@ -351,7 +351,7 @@ static struct ibmvmc_hmc *ibmvmc_get_free_hmc(void)
 	return NULL;
 }
 
-static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
+static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc, bool bReleaseReaders)
 {
 	unsigned long i;
 	struct ibmvmc_buffer *buffer;
@@ -361,6 +361,14 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc)
 
 	if ((hmc == NULL) || (hmc->adapter == NULL))
 		return -EIO;
+
+	if (bReleaseReaders) {
+		if (hmc->pSession != NULL) {
+			struct ibmvmc_file_session * session = hmc->pSession;
+			session->valid = 0;
+			wake_up_interruptible(&ibmvmc_read_wait);
+		}
+	}
 
 	adapter = hmc->adapter;
 	vdev = to_vio_dev(adapter->dev);
@@ -652,8 +660,10 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 	}
 
 	session = file->private_data;
-	if (!session)
+	if (!session) {
+		pr_warn("ibmvmc: read: no session\n");
 		return -EIO;
+	}
 
 	hmc = session->hmc;
 	if (!hmc) {
@@ -667,7 +677,6 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 		return -EIO;
 	}
 
-
 	do {
 		spin_lock_irqsave(&(hmc->lock), flags);
 		if (hmc->queue_tail != hmc->queue_head)
@@ -676,6 +685,10 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 
 		spin_unlock_irqrestore(&(hmc->lock), flags);
 
+		if (!session->valid) {
+			retval = -EBADFD;
+			goto out;
+		}
 		if (file->f_flags & O_NONBLOCK) {
 			retval = -EAGAIN;
 			goto out;
@@ -684,6 +697,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 			retval = -ERESTARTSYS;
 			goto out;
 		}
+
 		set_current_state(TASK_INTERRUPTIBLE);
 		add_wait_queue(&ibmvmc_read_wait, &wait);
 		schedule();
@@ -709,6 +723,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 	}
 
  out:
+	pr_warn("ibmvmc: read: out %d\n", (int)retval);
 	return retval;
 }
 
@@ -874,6 +889,8 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 
 	session->hmc = hmc;
 	hmc->adapter = &ibmvmc_adapter;
+	hmc->pSession = session;
+	session->valid = 1;
 
 	return 0;
 }
@@ -1269,14 +1286,14 @@ static int ibmvmc_validate_hmc_session(struct crq_msg_ibmvmc *crq)
 	return 0;
 }
 
-static void ibmvmc_reset(void)
+static void ibmvmc_reset(bool bReleaseReaders)
 {
 	int i;
 
 	pr_info("ibmvmc: *** Reset to initial state.\n");
 	for (i = 0; i < ibmvmc_max_hmcs; i++)
 		if (hmcs[i].state != ibmhmc_state_free)
-			ibmvmc_return_hmc(&hmcs[i]);
+			ibmvmc_return_hmc(&hmcs[i], bReleaseReaders);
 
 	ibmvmc.state = ibmvmc_state_crqinit;
 }
@@ -1289,12 +1306,12 @@ static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
 	hmc_index = crq->hmc_index;
 	if (hmc_index > ibmvmc.max_hmc_index)
 		/* Why would PHYP give an index > max negotiated? */
-		ibmvmc_reset();
+		ibmvmc_reset(false);
 
 	if (crq->status) {
 		pr_warn("ibmvmc: open_resp: failed - status 0x%x\n",
 				crq->status);
-		ibmvmc_return_hmc(&hmcs[hmc_index]);
+		ibmvmc_return_hmc(&hmcs[hmc_index], false);
 		return;
 	}
 
@@ -1325,18 +1342,18 @@ static void ibmvmc_process_close_resp(struct crq_msg_ibmvmc *crq)
 
 	hmc_index = crq->hmc_index;
 	if (hmc_index > ibmvmc.max_hmc_index) {
-		ibmvmc_reset();
+		ibmvmc_reset(false);
 		return;
 	}
 
 	if (crq->status) {
 		pr_warn("ibmvmc: close_resp: failed - status 0x%x\n",
 				crq->status);
-		ibmvmc_reset();
+		ibmvmc_reset(false);
 		return;
 	}
 
-	ibmvmc_return_hmc(&hmcs[hmc_index]);
+	ibmvmc_return_hmc(&hmcs[hmc_index], false);
 }
 
 static void ibmvmc_crq_process(struct crq_server_adapter *adapter,
@@ -1429,7 +1446,7 @@ static void ibmvmc_handle_crq(struct crq_msg_ibmvmc *crq,
 		break;
 	case 0xFF:	/* Hypervisor telling us the connection is closed */
 		pr_warn("ibmvmc: CRQ recv: virtual adapter failed - resetting.\n");
-		ibmvmc_reset();
+		ibmvmc_reset(true);
 		break;
 	case 0x80:	/* real payload */
 		ibmvmc_crq_process(adapter, crq);
