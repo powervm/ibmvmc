@@ -164,6 +164,8 @@ struct ibmvmc_struct {
 	struct cdev cdev;
 };
 
+struct ibmvmc_file_session;
+
 /* Connection specific settings */
 struct ibmvmc_hmc {
 	u8 session;
@@ -175,11 +177,13 @@ struct ibmvmc_hmc {
 	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
 	unsigned short queue_outbound_msgs[MAX_BUF_POOL_SIZE];
 	int queue_head, queue_tail;
+   struct ibmvmc_file_session *pSession;
 };
 
 struct ibmvmc_file_session {
 	struct file *file;
 	struct ibmvmc_hmc *hmc;
+   bool valid;
 };
 
 struct ibmvmc_ioctl_query_struct {
