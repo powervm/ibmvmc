@@ -705,28 +705,39 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 	}
 
 	do {
+		set_current_state(TASK_INTERRUPTIBLE);
+		add_wait_queue(&ibmvmc_read_wait, &wait);
+
 		spin_lock_irqsave(&(hmc->lock), flags);
 		if (hmc->queue_tail != hmc->queue_head)
+		{
 			/* Data is available */
+			set_current_state(TASK_RUNNING);
+			remove_wait_queue(&ibmvmc_read_wait, &wait);
 			break;
+		}
 
 		spin_unlock_irqrestore(&(hmc->lock), flags);
 
 		if (!session->valid) {
+			set_current_state(TASK_RUNNING);
+			remove_wait_queue(&ibmvmc_read_wait, &wait);
 			retval = -EBADFD;
 			goto out;
 		}
 		if (file->f_flags & O_NONBLOCK) {
+			set_current_state(TASK_RUNNING);
+			remove_wait_queue(&ibmvmc_read_wait, &wait);
 			retval = -EAGAIN;
 			goto out;
 		}
 		if (signal_pending(current)) {
+			set_current_state(TASK_RUNNING);
+			remove_wait_queue(&ibmvmc_read_wait, &wait);
 			retval = -ERESTARTSYS;
 			goto out;
 		}
 
-		set_current_state(TASK_INTERRUPTIBLE);
-		add_wait_queue(&ibmvmc_read_wait, &wait);
 		schedule();
 		set_current_state(TASK_RUNNING);
 		remove_wait_queue(&ibmvmc_read_wait, &wait);
