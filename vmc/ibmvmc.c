@@ -665,7 +665,7 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 		loff_t *ppos)
 {
-	DECLARE_WAITQUEUE(wait, current);
+	DEFINE_WAIT(wait);
 	ssize_t	n;
 	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
@@ -705,6 +705,8 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 	}
 
 	do {
+		prepare_to_wait(&ibmvmc_read_wait, &wait, TASK_INTERRUPTIBLE);
+
 		spin_lock_irqsave(&(hmc->lock), flags);
 		if (hmc->queue_tail != hmc->queue_head)
 			/* Data is available */
@@ -720,16 +722,13 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 			retval = -EAGAIN;
 			goto out;
 		}
+
+		schedule();
+
 		if (signal_pending(current)) {
 			retval = -ERESTARTSYS;
 			goto out;
 		}
-
-		set_current_state(TASK_INTERRUPTIBLE);
-		add_wait_queue(&ibmvmc_read_wait, &wait);
-		schedule();
-		set_current_state(TASK_RUNNING);
-		remove_wait_queue(&ibmvmc_read_wait, &wait);
 	} while (1);
 
 	buffer = &(hmc->buffer[hmc->queue_outbound_msgs[hmc->queue_tail]]);
@@ -750,6 +749,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 	}
 
  out:
+	finish_wait(&ibmvmc_read_wait, &wait);
 	pr_warn("ibmvmc: read: out %d\n", (int)retval);
 	return retval;
 }
