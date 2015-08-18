@@ -750,7 +750,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 
  out:
 	finish_wait(&ibmvmc_read_wait, &wait);
-	pr_warn("ibmvmc: read: out %d\n", (int)retval);
+	pr_debug("ibmvmc: read: out %ld\n", retval);
 	return retval;
 }
 
