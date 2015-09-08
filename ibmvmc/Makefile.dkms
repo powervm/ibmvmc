@@ -1,0 +1,39 @@
+# =======================================
+# Makefile for ibmvmc Linux device driver
+# =======================================
+TARGET := ibmvmc
+DRIVER_NAME = $(TARGET)
+
+# Define kernel parameters
+KVERSION := $(shell uname -r)
+
+ifndef KERNELDIR
+	KDIR = /lib/modules/$(KVERSION)/build
+endif
+
+INSTALLDIR = /lib/modules/$(KVERSION)/kernel/drivers/misc
+
+# Check for DEBUG (Logs to /var/log/kern.log)
+ifdef DEBUG
+		CFLAGS_$(TARGET).o := -DDEBUG
+endif
+
+# Objects to build
+obj-m := $(TARGET).o
+
+# Build options
+all:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+INSTALL_CMD := "rmmod $(TARGET) 2>/dev/null || true &&  \
+				install -d $(INSTALLDIR) &&     		\
+	            cp -v $(TARGET).ko $(INSTALLDIR) &&		\
+			    /sbin/depmod -a &&                  	\
+			    /sbin/modprobe $(TARGET)"
+
+install:
+	su -c $(INSTALL_CMD)
+
+clean:
+	$(MAKE) -C $(KDIR) M=$(PWD) clean
+
