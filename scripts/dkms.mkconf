@@ -1,0 +1,31 @@
+#!/bin/bash
+
+PROG=$0
+KERNELVER=${KERNELVER:-"\$kernelver"}
+
+while getopts "n:v:f:d:" opt; do
+    case $opt in
+        n) pkgname=$OPTARG ;;
+        v) pkgver=$OPTARG  ;;
+        f) filename=$OPTARG ;;
+        d) debug=$OPTARG ;;
+    esac
+done
+
+if [ -z "${pkgname}" -o -z "${pkgver}" -o -z "${filename} -o -d "${debug}"" ]; then
+    echo "Usage: $PROG -n <pkgname> -v <pkgver> -f <filename> -d <debug>"
+    exit 1
+fi
+
+cat >${filename} <<EOF
+PACKAGE_NAME="${pkgname}"
+PACKAGE_VERSION="${pkgver}"
+MAKE[0]="cd ibmvmc; make -f Makefile.dkms all KVERSION=${KERNELVER}"
+CLEAN="cd ibmvmc; make -f Makefile.dkms clean"
+BUILT_MODULE_NAME[0]="ibmvmc"
+BUILT_MODULE_LOCATION[0]="ibmvmc/"
+DEST_MODULE_LOCATION[0]="/updates"
+AUTOINSTALL="yes"
+REMAKE_INITRD=no
+STRIP="${debug}"
+EOF
