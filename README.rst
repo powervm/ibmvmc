@@ -49,12 +49,14 @@ To build the DKMS package, run, with sudo/root authority:
 
 Running this script will perform the following steps:
 - If not installed, the followed dependencies listed above will be installed
+- If not manually set, the ibmvmc version will be automatically generated using git tags
 - The ibmvmc source code will be placed at /usr/src/ibmvmc-<version>
 - The ibmvmc module will be added to DKMS
 - The ibmvmc module will be built
 - A debian source package will be built for ibmvmc-dkms
 - A binary debian package containing this source will be built
 - The build files will be cleaned up
+
 
 Installing the DKMS Package
 ---------------------------

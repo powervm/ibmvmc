@@ -19,11 +19,15 @@
 set -e -u -v -x -o pipefail
 
 ## Vars ----------------------------------------------------------------------
+basedir="$(dirname $0)"
+
 export IBMVMC_MODULE_NAME=${IBMVMC_MODULE_NAME:-"ibmvmc"}
-export IBMVMC_VERSION=${IBMVMC_VERSION:-"1.0"}
+export IBMVMC_VERSION=${IBMVMC_VERSION:-"$(git describe --tags --long | sed '1s/^.//')"}
 export IBMVMC_SOURCE_LOCATION=${IBMVMC_SOURCE_LOCATION:-"$PWD"}
 export IBMVMC_SOURCE_DESTINATION=${IBMVMC_SOURCE_DESTINATION:-"/usr/src/ibmvmc-$IBMVMC_VERSION"}
 export IBMVMC_DKMS_BUILD_DEPS=${IBMVMC_DKMS_BUILD_DEPS:-"dkms debhelper linux-headers-$(uname -r)"}
+export DKMS_CONF_LOCATION=${DKMS_CONF_LOCATION:-"$IBMVMC_SOURCE_DESTINATION/dkms.conf"}
+export IBMVMC_STRIP_DEBUG=${IBMVMC_STRIP_DEBUG:-"yes"}
 
 ## Main ----------------------------------------------------------------------
 echo "Building ibmvmc-dkms package"
@@ -43,6 +47,14 @@ fi
 
 # Place the ibmvmc-dkms source
 cp -ra "${IBMVMC_SOURCE_LOCATION}" "${IBMVMC_SOURCE_DESTINATION}"
+
+# Build and place the DKMS configuration file with the source
+DKMS_SCRIPT=dkms.mkconf
+if [ -f "${basedir}/${DKMS_SCRIPT}" ]; then
+    ./"${basedir}/${DKMS_SCRIPT}" "-n ${IBMVMC_MODULE_NAME}-dkms" "-v ${IBMVMC_VERSION}" "-f ${DKMS_CONF_LOCATION}" "-d ${IBMVMC_STRIP_DEBUG}"
+else
+    echo "Missing DKMS build script ${DKMS_SCRIPT}" && exit 1
+fi
 
 # Add the ibmvmc module to dkms
 dkms add -m "${IBMVMC_MODULE_NAME}" -v "${IBMVMC_VERSION}"
