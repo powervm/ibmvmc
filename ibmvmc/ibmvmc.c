@@ -60,7 +60,8 @@ static int ibmvmc_max_hmcs = DEFAULT_HMCS;
 static int ibmvmc_max_mtu = DEFAULT_MTU;
 
 /* Module parameters */
-module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size, int, S_IRUGO | S_IWUSR);
+module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size,
+		   int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(buf_pool_size, "Buffer pool size");
 module_param_named(max_hmcs, ibmvmc_max_hmcs, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(max_hmcs, "Max HMCs");
@@ -391,7 +392,8 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc, bool bReleaseReaders)
 
 	if (bReleaseReaders) {
 		if (hmc->pSession != NULL) {
-			struct ibmvmc_file_session * session = hmc->pSession;
+			struct ibmvmc_file_session *session = hmc->pSession;
+
 			session->valid = 0;
 			wake_up_interruptible(&ibmvmc_read_wait);
 		}
@@ -979,10 +981,10 @@ static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 }
 
 static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
-		struct ibmvmc_ioctl_query_struct __user *ret_struct)
+		struct ibmvmc_query_struct __user *ret_struct)
 {
 	size_t bytes;
-	struct ibmvmc_ioctl_query_struct query_struct;
+	struct ibmvmc_query_struct query_struct;
 
 	memset(&query_struct, 0, sizeof(query_struct));
 	query_struct.have_vmc = (ibmvmc.state > ibmvmc_state_initial);
@@ -1000,7 +1002,7 @@ static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
 static long ibmvmc_ioctl_requestvmc(struct ibmvmc_file_session *session,
 		u32 __user *ret_vmc_index)
 {
-	/* TODO: (adreznec) Add locking to control access by multiple processes */
+	/* TODO: (adreznec) Add locking to control multiple process access */
 	size_t bytes;
 	long rc;
 	u32 vmc_drc_index;
@@ -1058,11 +1060,14 @@ static long ibmvmc_ioctl(struct file *file,
 
 	switch (cmd) {
 	case VMC_IOCTL_SETHMCID:
-		return ibmvmc_ioctl_sethmcid(session, (unsigned char __user *)arg);
+		return ibmvmc_ioctl_sethmcid(session,
+			(unsigned char __user *)arg);
 	case VMC_IOCTL_QUERY:
-		return ibmvmc_ioctl_query(session, (struct ibmvmc_ioctl_query_struct __user *)arg);
+		return ibmvmc_ioctl_query(session,
+			(struct ibmvmc_query_struct __user *)arg);
 	case VMC_IOCTL_REQUESTVMC:
-		return ibmvmc_ioctl_requestvmc(session, (unsigned int __user *)arg);
+		return ibmvmc_ioctl_requestvmc(session,
+			(unsigned int __user *)arg);
 	default:
 		pr_warn("ibmvmc: unknown ioctl 0x%x\n", cmd);
 		return -EINVAL;
@@ -1486,7 +1491,8 @@ static void ibmvmc_handle_crq_init(struct crq_msg_ibmvmc *crq,
 				ibmvmc.state);
 		if (ibmvmc.state == ibmvmc_state_crqinit) {
 			/* Send back a response */
-			if (ibmvmc_send_crq(adapter, 0xC002000000000000, 0) == 0)
+			if (ibmvmc_send_crq(adapter, 0xC002000000000000,
+				0) == 0)
 				ibmvmc_send_capabilities(adapter);
 			else
 				pr_err("ibmvmc: Unable to send init rsp\n");
@@ -1617,7 +1623,8 @@ static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 
 req_irq_failed:
 	/* Cannot have any work since we either never got our IRQ registered,
-	 * or never got interrupts enabled */
+	 * or never got interrupts enabled
+	 */
 	destroy_workqueue(adapter->work_queue);
 create_workqueue_failed:
 	h_free_crq(vdev->unit_address);
@@ -1640,7 +1647,8 @@ static int read_dma_window(struct vio_dev *vdev,
 
 	/* TODO Using of_parse_dma_window would be better, but it doesn't give
 	 * a way to read multiple windows without already knowing the size of
-	 * a window or the number of windows */
+	 * a window or the number of windows
+	 */
 	dma_window =
 		(const __be32 *)vio_get_attribute(vdev, "ibm,my-dma-window",
 						NULL);
@@ -1778,7 +1786,8 @@ static int __init ibmvmc_module_init(void)
 	pr_info("ibmvmc: version %s\n", IBMVMC_DRIVER_VERSION);
 
 	/* Dynamically allocate ibmvmc major number */
-	if (alloc_chrdev_region(&ibmvmc_chrdev, 0, VMC_NUM_MINORS, ibmvmc_driver_name)) {
+	if (alloc_chrdev_region(&ibmvmc_chrdev, 0, VMC_NUM_MINORS,
+		ibmvmc_driver_name)) {
 		pr_err("ibmvmc: unable to allocate a dev_t\n");
 		rc = -EIO;
 		goto alloc_chrdev_failed;
