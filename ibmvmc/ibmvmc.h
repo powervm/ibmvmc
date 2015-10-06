@@ -43,10 +43,10 @@
 #define VMC_NUM_MINORS	1
 
 /* ioctl numbers */
-#define VMC_BASE		0xCC
-#define VMC_IOCTL_SETHMCID	_IOW(VMC_BASE, 0x00, unsigned char *)
-#define VMC_IOCTL_QUERY		_IOR(VMC_BASE, 0x01, struct ibmvmc_ioctl_query_struct)
-#define VMC_IOCTL_REQUESTVMC	_IOR(VMC_BASE, 0x02, u32)
+#define VMC_BASE	     0xCC
+#define VMC_IOCTL_SETHMCID   _IOW(VMC_BASE, 0x00, unsigned char *)
+#define VMC_IOCTL_QUERY      _IOR(VMC_BASE, 0x01, struct ibmvmc_query_struct)
+#define VMC_IOCTL_REQUESTVMC _IOR(VMC_BASE, 0x02, u32)
 
 #define VMC_MSG_CAP          0x01
 #define VMC_MSG_CAP_RESP     0x81
@@ -196,7 +196,7 @@ struct ibmvmc_file_session {
 	bool valid;
 };
 
-struct ibmvmc_ioctl_query_struct {
+struct ibmvmc_query_struct {
 	int have_vmc;
 	int state;
 	int vmc_drc_index;
