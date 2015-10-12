@@ -39,22 +39,24 @@ To build and install this code using DKMS manually, do the following:
 
 Building the ibmvmc DKMS Source Package
 ---------------------------------------
-NOTE: The following dependencies will be installed when building the ibmvmc-dkms package
+NOTE: The following dependencies are required when building the ibmvmc-dkms package
 - dkms
 - debhelper
 - linux-headers-$(uname -r)
 
 To build the DKMS package, run, with sudo/root authority:
-- scripts/build-ibmvmc-dkms.sh
+- scripts/build-ibmvmc-dkms.sh [-i]
 
 Running this script will perform the following steps:
-- If not installed, the followed dependencies listed above will be installed
+- If not installed, the dependencies listed above can be installed with the -i flag
+- If not manually set, the ibmvmc version will be automatically generated using git tags
 - The ibmvmc source code will be placed at /usr/src/ibmvmc-<version>
 - The ibmvmc module will be added to DKMS
 - The ibmvmc module will be built
 - A debian source package will be built for ibmvmc-dkms
 - A binary debian package containing this source will be built
 - The build files will be cleaned up
+
 
 Installing the DKMS Package
 ---------------------------
