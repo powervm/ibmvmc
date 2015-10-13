@@ -18,19 +18,19 @@
 ## Shell Opts ----------------------------------------------------------------
 set -e -u -o pipefail
 
-## Exports ----------------------------------------------------------------------
-export IBMVMC_MODULE_NAME=${IBMVMC_MODULE_NAME:-"ibmvmc"}
-export IBMVMC_VERSION=${IBMVMC_VERSION:-"$(git describe --tags --long | sed '1s/^.//')"}
-export IBMVMC_SOURCE_LOCATION=${IBMVMC_SOURCE_LOCATION:-"$PWD"}
-export IBMVMC_SOURCE_DESTINATION=${IBMVMC_SOURCE_DESTINATION:-"/usr/src/ibmvmc-$IBMVMC_VERSION"}
-export DKMS_CONF_LOCATION=${DKMS_CONF_LOCATION:-"$IBMVMC_SOURCE_DESTINATION/dkms.conf"}
-export IBMVMC_STRIP_DEBUG=${IBMVMC_STRIP_DEBUG:-"yes"}
-
 ## Vars ----------------------------------------------------------------------
 install_deps=0
 debian_build_deps="dkms debhelper linux-headers-$(uname -r)"
-basedir="$(dirname $0)"
+basedir="$(git rev-parse --show-toplevel)"
 DKMS_SCRIPT=dkms.mkconf
+
+## Exports ----------------------------------------------------------------------
+export IBMVMC_MODULE_NAME=${IBMVMC_MODULE_NAME:-"ibmvmc"}
+export IBMVMC_VERSION=${IBMVMC_VERSION:-"$(git describe --tags --long | sed '1s/^.//')"}
+export IBMVMC_SOURCE_LOCATION=${IBMVMC_SOURCE_LOCATION:-$basedir}
+export IBMVMC_SOURCE_DESTINATION=${IBMVMC_SOURCE_DESTINATION:-"/usr/src/${IBMVMC_MODULE_NAME}-${IBMVMC_VERSION}"}
+export DKMS_CONF_LOCATION=${DKMS_CONF_LOCATION:-"$IBMVMC_SOURCE_DESTINATION/dkms.conf"}
+export IBMVMC_STRIP_DEBUG=${IBMVMC_STRIP_DEBUG:-"yes"}
 
 ## Functions ----------------------------------------------------------------------
 
@@ -76,17 +76,17 @@ if [ -d "${IBMVMC_SOURCE_DESTINATION}" ];then
     rm -rf "${IBMVMC_SOURCE_DESTINATION}"
 fi
 
-# Clean up any old build files
-if [ -d "/var/lib/dkms/${IBMVMC_MODULE_NAME}" ];then
-    rm -rf "/var/lib/dkms/${IBMVMC_MODULE_NAME}"
+# Clean up any old existing DKMS installs from the same version
+if [ -d "/var/lib/dkms/${IBMVMC_MODULE_NAME}/${IBMVMC_VERSION}" ]; then
+    rm -rf "/var/lib/dkms/${IBMVMC_MODULE_NAME}/${IBMVMC_VERSION}"
 fi
 
 # Place the ibmvmc-dkms source
 cp -ra "${IBMVMC_SOURCE_LOCATION}" "${IBMVMC_SOURCE_DESTINATION}"
 
 # Build and place the DKMS configuration file with the source
-if [ -f "${basedir}/${DKMS_SCRIPT}" ]; then
-    ./"${basedir}/${DKMS_SCRIPT}" "-n ${IBMVMC_MODULE_NAME}-dkms" "-v ${IBMVMC_VERSION}" "-f ${DKMS_CONF_LOCATION}" "-d ${IBMVMC_STRIP_DEBUG}"
+if [ -f "${basedir}/scripts/${DKMS_SCRIPT}" ]; then
+    "${basedir}/scripts/${DKMS_SCRIPT}" "-n ${IBMVMC_MODULE_NAME}-dkms" "-v ${IBMVMC_VERSION}" "-f ${DKMS_CONF_LOCATION}" "-d ${IBMVMC_STRIP_DEBUG}"
 else
     echo "Missing DKMS build script ${DKMS_SCRIPT}" && exit 1
 fi
