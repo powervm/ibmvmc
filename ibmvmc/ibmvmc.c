@@ -948,16 +948,6 @@ static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 		}
 	}
 
-	/* Send Open Session command */
-	spin_lock_irqsave(&(hmc->lock), flags);
-	buffer = get_valid_hmc_buffer_locked(hmc->index);
-	spin_unlock_irqrestore(&(hmc->lock), flags);
-
-	if (buffer == NULL || (buffer->real_addr_local == NULL)) {
-		pr_warn("ibmvmc: sethmcid: no buffer available\n");
-		return -EIO;
-	}
-
 	if (hmc->state != ibmhmc_state_initial) {
 		pr_warn("ibmvmc: sethmcid: invalid state to send open 0x%x\n",
 				hmc->state);
@@ -967,6 +957,16 @@ static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 	bytes = copy_from_user(hmc->hmc_id, new_hmc_id, HMC_ID_LEN);
 	if (bytes)
 		return -EFAULT;
+
+	/* Send Open Session command */
+	spin_lock_irqsave(&(hmc->lock), flags);
+	buffer = get_valid_hmc_buffer_locked(hmc->index);
+	spin_unlock_irqrestore(&(hmc->lock), flags);
+
+	if (buffer == NULL || (buffer->real_addr_local == NULL)) {
+		pr_warn("ibmvmc: sethmcid: no buffer available\n");
+		return -EIO;
+	}
 
 	/* Make sure buffer is NULL terminated before trying to print it */
 	memset(print_buffer, 0, HMC_ID_LEN+1);
