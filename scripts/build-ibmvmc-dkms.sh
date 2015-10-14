@@ -26,7 +26,8 @@ DKMS_SCRIPT=dkms.mkconf
 
 ## Exports ----------------------------------------------------------------------
 export IBMVMC_MODULE_NAME=${IBMVMC_MODULE_NAME:-"ibmvmc"}
-export IBMVMC_VERSION=${IBMVMC_VERSION:-"$(git describe --tags --long | sed '1s/^.//')"}
+# Note - Do not use a hyphen ('-') as part of the version. See: https://bugs.launchpad.net/dkms/+bug/599983
+export IBMVMC_VERSION=${IBMVMC_VERSION:-"$(git describe --tags --long | sed '1s/^.//' | sed 's/-/./g')"}
 export IBMVMC_SOURCE_LOCATION=${IBMVMC_SOURCE_LOCATION:-$basedir}
 export IBMVMC_SOURCE_DESTINATION=${IBMVMC_SOURCE_DESTINATION:-"/usr/src/${IBMVMC_MODULE_NAME}-${IBMVMC_VERSION}"}
 export DKMS_CONF_LOCATION=${DKMS_CONF_LOCATION:-"$IBMVMC_SOURCE_DESTINATION/dkms.conf"}
