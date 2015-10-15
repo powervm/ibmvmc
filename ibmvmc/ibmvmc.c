@@ -901,7 +901,7 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 		if (valid == 0) {
 			pr_warn("ibmvmc: buffers not ready for index %d\n",
 					index);
-			return -EAGAIN;
+			return -ENOBUFS;
 		}
 	}
 
