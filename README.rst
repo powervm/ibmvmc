@@ -46,7 +46,7 @@ NOTE: The following dependencies are required when building the ibmvmc-dkms pack
 
 To build the DKMS package, run, with sudo/root authority:
 - scripts/build-ibmvmc-dkms.sh [-i]
-- Note: Do not use hyphens in the version
+  - Note: Do not use hyphens in the version
 
 Running this script will perform the following steps:
 - If not installed, the dependencies listed above can be installed with the -i flag
