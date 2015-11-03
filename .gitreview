@@ -2,3 +2,4 @@
 host=morpheus.rch.stglabs.ibm.com
 port=29418
 project=neo-vmc.git
+defaultbranch=release/1.0.0
