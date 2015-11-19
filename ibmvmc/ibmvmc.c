@@ -44,7 +44,7 @@
 
 #include "ibmvmc.h"
 
-#define IBMVMC_DRIVER_VERSION "1.0"
+#define IBMVMC_DRIVER_VERSION "1.0.0.1"
 
 MODULE_DESCRIPTION("IBM VMC");
 MODULE_AUTHOR("Steven Royer <seroyer@us.ibm.com>");

@@ -16,6 +16,9 @@ Overview
 The ibmvmc kernel module provides a device driver with interfaces supporting
 interaction with the IBM PowerPC Virtual Communications Channel (VMC) device.
 
+Version
+-------
+1.0.0.1
 
 License
 -------
