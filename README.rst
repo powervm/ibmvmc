@@ -26,7 +26,7 @@ Manually Building and Installing with DKMS
 ------------------------------------------
 To build and install this code using DKMS manually, do the following:
 - Clone down this repository on the machine you want to build/install on
-- On the same machine, copy the neo-vmc repo to /usr/src/ibmvmc-<version>
+- On the same machine, copy the ibmvmc repo to /usr/src/ibmvmc-<version>
 - Install prerequisite packages:
   - dkms
   - debhelper
