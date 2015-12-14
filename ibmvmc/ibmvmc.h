@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2004, 2015 IBM Corp.
  *   Dave Engebretsen engebret@us.ibm.com
- *   Steven Royer seroyer@us.ibm.com
+ *   Steven Royer seroyer@linux.vnet.ibm.com
  *   Adam Reznechek adreznec@linux.vnet.ibm.com
  *
  * This program is free software; you can redistribute it and/or
