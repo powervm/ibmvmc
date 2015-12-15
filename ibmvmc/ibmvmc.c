@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2004, 2015 IBM Corp.
  *   Dave Engebretsen engebret@us.ibm.com
- *   Steven Royer seroyer@us.ibm.com
+ *   Steven Royer seroyer@linux.vnet.ibm.com
  *   Adam Reznechek adreznec@linux.vnet.ibm.com
  *
  * This program is free software; you can redistribute it and/or
@@ -47,7 +47,7 @@
 #define IBMVMC_DRIVER_VERSION "1.0"
 
 MODULE_DESCRIPTION("IBM VMC");
-MODULE_AUTHOR("Steven Royer <seroyer@us.ibm.com>");
+MODULE_AUTHOR("Steven Royer <seroyer@linux.vnet.ibm.com>");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(IBMVMC_DRIVER_VERSION);
 
@@ -1714,7 +1714,7 @@ static int ibmvmc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 			adapter->riobn);
 
 	rc = ibmvmc_init_crq_queue(adapter);
-	if (rc != 0) {
+	if (rc != 0 && rc != H_RESOURCE) {
 		pr_err("ibmvmc: Error initializing CRQ.  rc = 0x%x\n", rc);
 		ibmvmc.state = ibmvmc_state_failed;
 		return -1;
