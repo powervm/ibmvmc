@@ -37,6 +37,7 @@
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
+#include <linux/device.h>
 
 #include <asm/byteorder.h>
 #include <asm/irq.h>
@@ -68,6 +69,8 @@ static dev_t ibmvmc_chrdev;
 static int ibmvmc_max_buf_pool_size = DEFAULT_BUF_POOL_SIZE;
 static int ibmvmc_max_hmcs = DEFAULT_HMCS;
 static int ibmvmc_max_mtu = DEFAULT_MTU;
+static struct class *ibmvmc_class;
+struct device *ibmvmc_dev;
 
 /* Module parameters */
 module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size,
@@ -1837,6 +1840,19 @@ static int __init ibmvmc_module_init(void)
 		goto cdev_add_failed;
 	}
 
+	ibmvmc_class = class_create( THIS_MODULE, "ibmvmc");
+	if (IS_ERR(ibmvmc_class)){
+		rc = PTR_ERR(ibmvmc_class);
+		pr_err("ibmvmc: class regiter ibmvmc failed");
+		goto cdev_add_failed;
+	}
+
+	ibmvmc_dev = device_create( ibmvmc_class, NULL, ibmvmc_chrdev, NULL, "ibmvmc" );
+	if (IS_ERR(ibmvmc_dev)) {
+		rc = PTR_ERR(ibmvmc_dev);
+		pr_err("ibmvmc: device add failed");
+		goto device_create_failed;
+	}
 	rc = vio_register_driver(&ibmvmc_driver);
 
 	if (rc) {
@@ -1848,6 +1864,8 @@ static int __init ibmvmc_module_init(void)
 
 vio_reg_failed:
 	cdev_del(&ibmvmc.cdev);
+device_create_failed:
+	class_destroy(ibmvmc_class);
 cdev_add_failed:
 	unregister_chrdev_region(ibmvmc_chrdev, VMC_NUM_MINORS);
 alloc_chrdev_failed:
@@ -1859,6 +1877,8 @@ static void __exit ibmvmc_module_exit(void)
 	pr_info("ibmvmc_module_exit\n");
 	vio_unregister_driver(&ibmvmc_driver);
 	cdev_del(&ibmvmc.cdev);
+	device_destroy(ibmvmc_class, ibmvmc_chrdev);
+	class_destroy(ibmvmc_class);
 	unregister_chrdev_region(ibmvmc_chrdev, VMC_NUM_MINORS);
 }
 
