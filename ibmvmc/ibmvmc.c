@@ -15,11 +15,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
  */
 
 #include <linux/module.h>
@@ -1348,7 +1343,7 @@ static void ibmvmc_process_capabilities(struct crq_msg_ibmvmc *crqp)
 	ibmvmc.max_hmc_index = min_t(u8, ibmvmc_max_hmcs, crq->max_hmc) - 1;
 	ibmvmc.state = ibmvmc_state_ready;
 
-	pr_info("ibmvmc: capabilites: mtu=0x%x, pool_size=0x%x, max_hmc=0x%x\n",
+	pr_info("ibmvmc: capabilities: mtu=0x%x, pool_size=0x%x, max_hmc=0x%x\n",
 			ibmvmc.max_mtu, ibmvmc.max_buffer_pool_size,
 			ibmvmc.max_hmc_index);
 }
@@ -1840,14 +1835,15 @@ static int __init ibmvmc_module_init(void)
 		goto cdev_add_failed;
 	}
 
-	ibmvmc_class = class_create( THIS_MODULE, "ibmvmc");
-	if (IS_ERR(ibmvmc_class)){
+	ibmvmc_class = class_create(THIS_MODULE, "ibmvmc");
+	if (IS_ERR(ibmvmc_class)) {
 		rc = PTR_ERR(ibmvmc_class);
 		pr_err("ibmvmc: class regiter ibmvmc failed");
 		goto cdev_add_failed;
 	}
 
-	ibmvmc_dev = device_create( ibmvmc_class, NULL, ibmvmc_chrdev, NULL, "ibmvmc" );
+	ibmvmc_dev = device_create(ibmvmc_class, NULL, ibmvmc_chrdev,
+			NULL, "ibmvmc");
 	if (IS_ERR(ibmvmc_dev)) {
 		rc = PTR_ERR(ibmvmc_dev);
 		pr_err("ibmvmc: device add failed");
@@ -1884,4 +1880,3 @@ static void __exit ibmvmc_module_exit(void)
 
 module_init(ibmvmc_module_init);
 module_exit(ibmvmc_module_exit);
-
