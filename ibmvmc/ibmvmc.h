@@ -20,7 +20,6 @@
 #define IBMVMC_H
 
 #include <linux/types.h>
-#include <linux/workqueue.h>
 #include <linux/cdev.h>
 
 #include <asm/vio.h>
@@ -165,8 +164,7 @@ struct crq_server_adapter {
 	struct crq_queue queue;
 	u32 liobn;
 	u32 riobn;
-	struct work_struct work;
-	struct workqueue_struct *work_queue;
+	struct tasklet_struct work_task;
 };
 
 /* Driver wide settings */

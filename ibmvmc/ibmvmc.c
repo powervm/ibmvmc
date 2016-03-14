@@ -54,7 +54,6 @@ MODULE_VERSION(IBMVMC_DRIVER_VERSION);
 static DECLARE_WAIT_QUEUE_HEAD(ibmvmc_read_wait);
 
 static const char ibmvmc_driver_name[] = "ibmvmc";
-static const char ibmvmc_workq_name[] = "ibmvmc";
 
 static struct ibmvmc_struct ibmvmc;
 static struct ibmvmc_hmc hmcs[MAX_HMCS];
@@ -146,7 +145,7 @@ static irqreturn_t ibmvmc_handle_event(int irq, void *dev_instance)
 		(struct crq_server_adapter *)dev_instance;
 
 	vio_disable_interrupts(to_vio_dev(adapter->dev));
-	queue_work(adapter->work_queue, &adapter->work);
+	tasklet_schedule(&adapter->work_task);
 
 	return IRQ_HANDLED;
 }
@@ -157,8 +156,7 @@ static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 	struct crq_queue *queue = &adapter->queue;
 
 	free_irq(vdev->irq, (void *)adapter);
-	flush_workqueue(adapter->work_queue);
-	destroy_workqueue(adapter->work_queue);
+	tasklet_kill(&adapter->work_task);
 
 	h_free_crq(vdev->unit_address);
 	dma_unmap_single(adapter->dev,
@@ -1541,10 +1539,10 @@ static void ibmvmc_handle_crq(struct crq_msg_ibmvmc *crq,
 	}
 }
 
-static void ibmvmc_task(struct work_struct *work)
+static void ibmvmc_task(unsigned long data)
 {
 	struct crq_server_adapter *adapter =
-		container_of(work, struct crq_server_adapter, work);
+		(struct crq_server_adapter *) data;
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
 	struct crq_msg_ibmvmc *crq;
 	int done = 0;
@@ -1605,13 +1603,7 @@ static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 	queue->cur = 0;
 	spin_lock_init(&queue->lock);
 
-	adapter->work_queue = create_singlethread_workqueue(ibmvmc_workq_name);
-	if (adapter->work_queue == NULL) {
-		pr_err("ibmvmc: couldn't allocate work queue\n");
-		goto create_workqueue_failed;
-	}
-
-	INIT_WORK(&adapter->work, ibmvmc_task);
+	tasklet_init(&adapter->work_task, ibmvmc_task, (unsigned long)adapter);
 
 	if (request_irq(vdev->irq,
 			ibmvmc_handle_event,
@@ -1633,8 +1625,7 @@ req_irq_failed:
 	/* Cannot have any work since we either never got our IRQ registered,
 	 * or never got interrupts enabled
 	 */
-	destroy_workqueue(adapter->work_queue);
-create_workqueue_failed:
+	tasklet_kill(&adapter->work_task);
 	h_free_crq(vdev->unit_address);
 reg_crq_failed:
 	dma_unmap_single(adapter->dev,
