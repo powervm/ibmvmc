@@ -1,7 +1,7 @@
 /*
  * IBM Power Systems Virtual Management Channel Support.
  *
- * Copyright (c) 2004, 2015 IBM Corp.
+ * Copyright (c) 2004, 2016 IBM Corp.
  *   Dave Engebretsen engebret@us.ibm.com
  *   Steven Royer seroyer@linux.vnet.ibm.com
  *   Adam Reznechek adreznec@linux.vnet.ibm.com

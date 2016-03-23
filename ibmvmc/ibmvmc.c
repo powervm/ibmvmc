@@ -1,7 +1,7 @@
 /*
  * IBM Power Systems Virtual Management Channel Support.
  *
- * Copyright (c) 2004, 2015 IBM Corp.
+ * Copyright (c) 2004, 2016 IBM Corp.
  *   Dave Engebretsen engebret@us.ibm.com
  *   Steven Royer seroyer@linux.vnet.ibm.com
  *   Adam Reznechek adreznec@linux.vnet.ibm.com
@@ -32,7 +32,7 @@
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
-#include <linux/device.h>
+#include <linux/miscdevice.h>
 
 #include <asm/byteorder.h>
 #include <asm/irq.h>
@@ -58,13 +58,10 @@ static const char ibmvmc_driver_name[] = "ibmvmc";
 static struct ibmvmc_struct ibmvmc;
 static struct ibmvmc_hmc hmcs[MAX_HMCS];
 static struct crq_server_adapter ibmvmc_adapter;
-static dev_t ibmvmc_chrdev;
 
 static int ibmvmc_max_buf_pool_size = DEFAULT_BUF_POOL_SIZE;
 static int ibmvmc_max_hmcs = DEFAULT_HMCS;
 static int ibmvmc_max_mtu = DEFAULT_MTU;
-static struct class *ibmvmc_class;
-struct device *ibmvmc_dev;
 
 /* Module parameters */
 module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size,
@@ -1777,6 +1774,12 @@ static void __init ibmvmc_scrub_module_parms(void)
 	}
 }
 
+static struct miscdevice ibmvmc_miscdev = {
+	.name = ibmvmc_driver_name,
+	.minor = MISC_DYNAMIC_MINOR,
+	.fops = &ibmvmc_fops,
+};
+
 static int __init ibmvmc_module_init(void)
 {
 	int rc, i, j;
@@ -1784,15 +1787,13 @@ static int __init ibmvmc_module_init(void)
 	ibmvmc.state = ibmvmc_state_initial;
 	pr_info("ibmvmc: version %s\n", IBMVMC_DRIVER_VERSION);
 
-	/* Dynamically allocate ibmvmc major number */
-	if (alloc_chrdev_region(&ibmvmc_chrdev, 0, VMC_NUM_MINORS,
-		ibmvmc_driver_name)) {
-		pr_err("ibmvmc: unable to allocate a dev_t\n");
-		rc = -EIO;
-		goto alloc_chrdev_failed;
+	rc = misc_register(&ibmvmc_miscdev);
+	if (rc) {
+		pr_err("ibmvmc: misc registration failed\n");
+		goto misc_register_failed;
 	}
-	pr_info("ibmvmc: node %d:%d\n", MAJOR(ibmvmc_chrdev),
-			MINOR(ibmvmc_chrdev));
+	pr_info("ibmvmc: node %d:%d\n", MISC_MAJOR,
+		ibmvmc_miscdev.minor);
 
 	/* Initialize data structures */
 	memset(hmcs, 0, sizeof(struct ibmvmc_hmc) * MAX_HMCS);
@@ -1814,32 +1815,6 @@ static int __init ibmvmc_module_init(void)
 	ibmvmc.max_buffer_pool_size = ibmvmc_max_buf_pool_size;
 	ibmvmc.max_hmc_index = ibmvmc_max_hmcs - 1;
 
-	/* Once cdev_add is complete, apps can start trying to use the vmc.
-	 * They will get EBUSY on open until after the probe has completed.
-	 */
-	cdev_init(&ibmvmc.cdev, &ibmvmc_fops);
-	ibmvmc.cdev.owner = THIS_MODULE;
-	ibmvmc.cdev.ops = &ibmvmc_fops;
-	rc = cdev_add(&ibmvmc.cdev, ibmvmc_chrdev, VMC_NUM_MINORS);
-	if (rc) {
-		pr_err("ibmvmc: unable to add cdev: %d\n", rc);
-		goto cdev_add_failed;
-	}
-
-	ibmvmc_class = class_create(THIS_MODULE, "ibmvmc");
-	if (IS_ERR(ibmvmc_class)) {
-		rc = PTR_ERR(ibmvmc_class);
-		pr_err("ibmvmc: class regiter ibmvmc failed");
-		goto cdev_add_failed;
-	}
-
-	ibmvmc_dev = device_create(ibmvmc_class, NULL, ibmvmc_chrdev,
-			NULL, "ibmvmc");
-	if (IS_ERR(ibmvmc_dev)) {
-		rc = PTR_ERR(ibmvmc_dev);
-		pr_err("ibmvmc: device add failed");
-		goto device_create_failed;
-	}
 	rc = vio_register_driver(&ibmvmc_driver);
 
 	if (rc) {
@@ -1850,23 +1825,16 @@ static int __init ibmvmc_module_init(void)
 	return 0;
 
 vio_reg_failed:
-	cdev_del(&ibmvmc.cdev);
-device_create_failed:
-	class_destroy(ibmvmc_class);
-cdev_add_failed:
-	unregister_chrdev_region(ibmvmc_chrdev, VMC_NUM_MINORS);
-alloc_chrdev_failed:
+	misc_deregister(&ibmvmc_miscdev);
+misc_register_failed:
 	return rc;
 }
 
 static void __exit ibmvmc_module_exit(void)
 {
-	pr_info("ibmvmc_module_exit\n");
+	pr_info("ibmvmc: module exit\n");
 	vio_unregister_driver(&ibmvmc_driver);
-	cdev_del(&ibmvmc.cdev);
-	device_destroy(ibmvmc_class, ibmvmc_chrdev);
-	class_destroy(ibmvmc_class);
-	unregister_chrdev_region(ibmvmc_chrdev, VMC_NUM_MINORS);
+	misc_deregister(&ibmvmc_miscdev);
 }
 
 module_init(ibmvmc_module_init);
