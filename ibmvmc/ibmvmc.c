@@ -1017,21 +1017,22 @@ static long ibmvmc_ioctl_requestvmc(struct ibmvmc_file_session *session,
 	if (rc == H_SUCCESS) {
 		rc = 0;
 	} else if (rc == H_FUNCTION) {
-		pr_warn("ibmvmc: requestvmc: h_request_vmc not supported\n");
+		pr_err("ibmvmc: requestvmc: h_request_vmc not supported\n");
 		return -EPERM;
 	} else if (rc == H_AUTHORITY) {
-		pr_warn("ibmvmc: requestvmc: hypervisor denied vmc request\n");
+		pr_err("ibmvmc: requestvmc: hypervisor denied vmc request\n");
 		return -EPERM;
 	} else if (rc == H_HARDWARE) {
-		pr_warn("ibmvmc: requestvmc: hypervisor hardware fault\n");
+		pr_err("ibmvmc: requestvmc: hypervisor hardware fault\n");
 		return -EIO;
 	} else if (rc == H_RESOURCE) {
-		pr_debug("ibmvmc: requestvmc: vmc resource unavailable\n");
-		return -EAGAIN;
+		pr_err("ibmvmc: requestvmc: vmc resource unavailable\n");
+		return -ENODEV;
 	} else if (rc == H_NOT_AVAILABLE) {
-		pr_warn("ibmvmc: requestvmc: system cannot be vmc managed\n");
+		pr_err("ibmvmc: requestvmc: system cannot be vmc managed\n");
 		return -EPERM;
 	} else if (rc == H_PARAMETER) {
+		pr_err("ibmvmc: requestvmc: invalid parameter\n");
 		return -EINVAL;
 	}
 
