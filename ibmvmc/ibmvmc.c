@@ -66,11 +66,11 @@ static int ibmvmc_max_mtu = DEFAULT_MTU;
 
 /* Module parameters */
 module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size,
-		   int, S_IRUGO | S_IWUSR);
+		   int, 0644);
 MODULE_PARM_DESC(buf_pool_size, "Buffer pool size");
-module_param_named(max_hmcs, ibmvmc_max_hmcs, int, S_IRUGO | S_IWUSR);
+module_param_named(max_hmcs, ibmvmc_max_hmcs, int, 0644);
 MODULE_PARM_DESC(max_hmcs, "Max HMCs");
-module_param_named(max_mtu, ibmvmc_max_mtu, int, S_IRUGO | S_IWUSR);
+module_param_named(max_mtu, ibmvmc_max_mtu, int, 0644);
 MODULE_PARM_DESC(max_mtu, "Max MTU");
 
 
@@ -96,7 +96,7 @@ static inline void h_free_crq(uint32_t unit_address)
 
 	do {
 		if (H_IS_LONG_BUSY(rc))
-			msleep(get_longbusy_msecs(rc));
+			mdelay(get_longbusy_msecs(rc));
 
 		rc = plpar_hcall_norets(H_FREE_CRQ, unit_address);
 	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
@@ -1366,19 +1366,40 @@ static int ibmvmc_validate_hmc_session(struct crq_msg_ibmvmc *crq)
 	return 0;
 }
 
-static void ibmvmc_reset(bool bReleaseReaders)
+static void ibmvmc_reset(struct crq_server_adapter *adapter,
+			 bool bReleaseReaders)
 {
 	int i;
+	int rc = 0;
+	bool sCRQClosed = bReleaseReaders;
 
 	pr_info("ibmvmc: *** Reset to initial state.\n");
 	for (i = 0; i < ibmvmc_max_hmcs; i++)
 		if (hmcs[i].state != ibmhmc_state_free)
 			ibmvmc_return_hmc(&hmcs[i], bReleaseReaders);
 
-	ibmvmc.state = ibmvmc_state_crqinit;
+	if (!sCRQClosed) {
+		rc = ibmvmc_reset_crq_queue(adapter);
+
+		if (rc != 0 && rc != H_RESOURCE) {
+			pr_err("ibmvmc: Error initializing CRQ.  rc = 0x%x\n",
+			       rc);
+			ibmvmc.state = ibmvmc_state_failed;
+			return;
+		}
+
+		ibmvmc.state = ibmvmc_state_crqinit;
+
+		if (ibmvmc_send_crq(adapter, 0xC001000000000000LL, 0) != 0
+				    && rc != H_RESOURCE)
+			pr_warn("ibmvmc: Failed to send initialize CRQ message\n");
+	} else {
+		ibmvmc.state = ibmvmc_state_crqinit;
+	}
 }
 
-static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
+static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq,
+				     struct crq_server_adapter *adapter)
 {
 	unsigned char hmc_index;
 	unsigned short buffer_id;
@@ -1386,7 +1407,7 @@ static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
 	hmc_index = crq->hmc_index;
 	if (hmc_index > ibmvmc.max_hmc_index)
 		/* Why would PHYP give an index > max negotiated? */
-		ibmvmc_reset(false);
+		ibmvmc_reset(adapter, false);
 
 	if (crq->status) {
 		pr_warn("ibmvmc: open_resp: failed - status 0x%x\n",
@@ -1416,20 +1437,21 @@ static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq)
  * If the close fails, simply reset the entire driver as the state of the VMC
  * must be in tough shape.
  */
-static void ibmvmc_process_close_resp(struct crq_msg_ibmvmc *crq)
+static void ibmvmc_process_close_resp(struct crq_msg_ibmvmc *crq,
+				      struct crq_server_adapter *adapter)
 {
 	unsigned char hmc_index;
 
 	hmc_index = crq->hmc_index;
 	if (hmc_index > ibmvmc.max_hmc_index) {
-		ibmvmc_reset(false);
+		ibmvmc_reset(adapter, false);
 		return;
 	}
 
 	if (crq->status) {
 		pr_warn("ibmvmc: close_resp: failed - status 0x%x\n",
 				crq->status);
-		ibmvmc_reset(false);
+		ibmvmc_reset(adapter, false);
 		return;
 	}
 
@@ -1452,7 +1474,7 @@ static void ibmvmc_crq_process(struct crq_server_adapter *adapter,
 	case VMC_MSG_OPEN_RESP:
 		pr_debug("ibmvmc: CRQ recv: open resp (0x%x)\n", crq->type);
 		if (ibmvmc_validate_hmc_session(crq) == 0)
-			ibmvmc_process_open_resp(crq);
+			ibmvmc_process_open_resp(crq, adapter);
 		break;
 	case VMC_MSG_ADD_BUF:
 		pr_debug("ibmvmc: CRQ recv: add buf (0x%x)\n", crq->type);
@@ -1472,7 +1494,7 @@ static void ibmvmc_crq_process(struct crq_server_adapter *adapter,
 	case VMC_MSG_CLOSE_RESP:
 		pr_debug("ibmvmc: CRQ recv: close resp (0x%x)\n", crq->type);
 		if (ibmvmc_validate_hmc_session(crq) == 0)
-			ibmvmc_process_close_resp(crq);
+			ibmvmc_process_close_resp(crq, adapter);
 		break;
 	case VMC_MSG_CAP:
 	case VMC_MSG_OPEN:
@@ -1527,7 +1549,7 @@ static void ibmvmc_handle_crq(struct crq_msg_ibmvmc *crq,
 		break;
 	case 0xFF:	/* Hypervisor telling us the connection is closed */
 		pr_warn("ibmvmc: CRQ recv: virtual adapter failed - resetting.\n");
-		ibmvmc_reset(true);
+		ibmvmc_reset(adapter, true);
 		break;
 	case 0x80:	/* real payload */
 		ibmvmc_crq_process(adapter, crq);
