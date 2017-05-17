@@ -121,7 +121,7 @@ static inline long h_request_vmc(u32 *vmc_index)
 
 		/* Call to request the VMC device from phyp */
 		rc = plpar_hcall(H_REQUEST_VMC, retbuf);
-		pr_debug("ibmvmc: h_request_vmc rc = 0x%lx\n", rc);
+		pr_debug("ibmvmc: %s rc = 0x%lx\n", __func__, rc);
 		*vmc_index = retbuf[0];
 	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
 
@@ -621,7 +621,7 @@ static int ibmvmc_open(struct inode *inode, struct file *file)
 	int retval = 0;
 	struct ibmvmc_file_session *session;
 
-	pr_debug("ibmvmc_open: inode = 0x%lx, file = 0x%lx, state = 0x%x\n",
+	pr_debug("%s: inode = 0x%lx, file = 0x%lx, state = 0x%x\n", __func__,
 			(unsigned long)inode, (unsigned long)file,
 			ibmvmc.state);
 
@@ -638,7 +638,7 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
 
-	pr_debug("ibmvmc_close: file = 0x%lx, state = 0x%x\n",
+	pr_debug("%s: file = 0x%lx, state = 0x%x\n", __func__,
 	     (unsigned long)file, ibmvmc.state);
 
 	session = file->private_data;
@@ -912,7 +912,7 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 	/* Get an hmc object, and transition to ibmhmc_state_initial */
 	hmc = ibmvmc_get_free_hmc();
 	if (hmc == NULL) {
-		pr_warn("ibmvmc_setup_hmc: free hmc not found\n");
+		pr_warn("%s: free hmc not found\n", __func__);
 		return -EBUSY;
 	}
 
