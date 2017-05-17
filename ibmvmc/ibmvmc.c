@@ -33,6 +33,7 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/miscdevice.h>
+#include <linux/sched/signal.h>
 
 #include <asm/byteorder.h>
 #include <asm/irq.h>
