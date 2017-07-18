@@ -79,6 +79,7 @@
 #define H_REQUEST_VMC           0x360
 
 enum ibmvmc_states {
+	ibmvmc_state_sched_reset  = -1,
 	ibmvmc_state_initial      = 0,
 	ibmvmc_state_crqinit      = 1,
 	ibmvmc_state_capabilities = 2,
@@ -165,6 +166,8 @@ struct crq_server_adapter {
 	u32 liobn;
 	u32 riobn;
 	struct tasklet_struct work_task;
+	wait_queue_head_t reset_wait_queue;
+	struct task_struct *reset_task;
 };
 
 /* Driver wide settings */
