@@ -19,6 +19,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/kthread.h>
 #include <linux/major.h>
 #include <linux/string.h>
 #include <linux/fcntl.h>
@@ -96,7 +97,7 @@ static inline void h_free_crq(uint32_t unit_address)
 
 	do {
 		if (H_IS_LONG_BUSY(rc))
-			mdelay(get_longbusy_msecs(rc));
+			msleep(get_longbusy_msecs(rc));
 
 		rc = plpar_hcall_norets(H_FREE_CRQ, unit_address);
 	} while ((rc == H_BUSY) || (H_IS_LONG_BUSY(rc)));
@@ -155,6 +156,10 @@ static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 
 	free_irq(vdev->irq, (void *)adapter);
 	tasklet_kill(&adapter->work_task);
+
+	if (adapter->reset_task) {
+		kthread_stop(adapter->reset_task);
+	}
 
 	h_free_crq(vdev->unit_address);
 	dma_unmap_single(adapter->dev,
@@ -637,6 +642,7 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 	int rc = 0;
 	struct ibmvmc_file_session *session;
 	struct ibmvmc_hmc *hmc;
+	unsigned long flags;
 
 	pr_debug("%s: file = 0x%lx, state = 0x%x\n", __func__,
 	     (unsigned long)file, ibmvmc.state);
@@ -655,12 +661,13 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 			return -EIO;
 		}
 
-		/* TODO locking? */
+		spin_lock_irqsave(&hmc->lock, flags);
 		if (hmc->state >= ibmhmc_state_opening) {
 			rc = send_close(hmc);
 			if (rc)
 				pr_warn("ibmvmc: close: send_close failed.\n");
 		}
+		spin_unlock_irqrestore(&hmc->lock, flags);
 	}
 
 	kzfree(session);
@@ -1366,36 +1373,78 @@ static int ibmvmc_validate_hmc_session(struct crq_msg_ibmvmc *crq)
 	return 0;
 }
 
-static void ibmvmc_reset(struct crq_server_adapter *adapter,
-			 bool bReleaseReaders)
+/**
+ * Closes all HMC sessions and conditionally schedules a CRQ reset.
+ * @xport_event: If true, the partner closed their CRQ; we don't need to reset.
+ *               If false, we need to schedule a CRQ reset.
+ */
+static void ibmvmc_reset(struct crq_server_adapter *adapter, bool xport_event)
 {
 	int i;
-	int rc = 0;
-	bool sCRQClosed = bReleaseReaders;
+	if (ibmvmc.state != ibmvmc_state_sched_reset) {
+		pr_info("ibmvmc: *** Reset to initial state.\n");
+		for (i = 0; i < ibmvmc_max_hmcs; i++)
+			ibmvmc_return_hmc(&hmcs[i], xport_event);
 
-	pr_info("ibmvmc: *** Reset to initial state.\n");
-	for (i = 0; i < ibmvmc_max_hmcs; i++)
-		if (hmcs[i].state != ibmhmc_state_free)
-			ibmvmc_return_hmc(&hmcs[i], bReleaseReaders);
+		if (xport_event) {
+			/* CRQ was closed by the partner.  We don't need to do anything
+			   except set ourself to the correct state to handle init msgs. */
+			ibmvmc.state = ibmvmc_state_crqinit;
+		} else {
+			/* The partner did not close their CRQ - instead, we're closing
+			   the CRQ on our end. Need to schedule this for process context,
+			   because CRQ reset may require a sleep.
 
-	if (!sCRQClosed) {
+			   Setting ibmvmc.state here immediately prevents ibmvmc_open
+			   from completing until the reset completes in process context. */
+			ibmvmc.state = ibmvmc_state_sched_reset;
+			pr_debug("ibmvmc: Device reset scheduled");
+			wake_up_interruptible(&adapter->reset_wait_queue);
+		}
+	}
+}
+
+/**
+ * Performs a CRQ reset of the VMC device in process context.
+ * NOTE: This function should not be called directly, use ibmvmc_reset.
+ */
+static int ibmvmc_reset_task(void *data)
+{
+	struct crq_server_adapter* adapter = data;
+
+	set_user_nice(current, -20);
+
+	while (!kthread_should_stop()) {
+		int rc = wait_event_interruptible(adapter->reset_wait_queue,
+		   (ibmvmc.state == ibmvmc_state_sched_reset) || kthread_should_stop());
+
+		if (kthread_should_stop())
+			break;
+
+		BUG_ON(rc);
+
+		pr_debug("ibmvmc: CRQ resetting in process context");
+		tasklet_disable(&adapter->work_task);
+
 		rc = ibmvmc_reset_crq_queue(adapter);
 
-		if (rc != 0 && rc != H_RESOURCE) {
+		if (rc != H_SUCCESS && rc != H_RESOURCE) {
 			pr_err("ibmvmc: Error initializing CRQ.  rc = 0x%x\n",
-			       rc);
+					rc);
 			ibmvmc.state = ibmvmc_state_failed;
-			return;
+		} else {
+			ibmvmc.state = ibmvmc_state_crqinit;
+
+			if (ibmvmc_send_crq(adapter, 0xC001000000000000LL, 0) != 0
+						&& rc != H_RESOURCE)
+				pr_warn("ibmvmc: Failed to send initialize CRQ message\n");
 		}
 
-		ibmvmc.state = ibmvmc_state_crqinit;
-
-		if (ibmvmc_send_crq(adapter, 0xC001000000000000LL, 0) != 0
-				    && rc != H_RESOURCE)
-			pr_warn("ibmvmc: Failed to send initialize CRQ message\n");
-	} else {
-		ibmvmc.state = ibmvmc_state_crqinit;
+		vio_enable_interrupts(to_vio_dev(adapter->dev));
+		tasklet_enable(&adapter->work_task);
 	}
+
+	return 0;
 }
 
 static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq,
@@ -1405,9 +1454,11 @@ static void ibmvmc_process_open_resp(struct crq_msg_ibmvmc *crq,
 	unsigned short buffer_id;
 
 	hmc_index = crq->hmc_index;
-	if (hmc_index > ibmvmc.max_hmc_index)
+	if (hmc_index > ibmvmc.max_hmc_index) {
 		/* Why would PHYP give an index > max negotiated? */
 		ibmvmc_reset(adapter, false);
+		return;
+	}
 
 	if (crq->status) {
 		pr_warn("ibmvmc: open_resp: failed - status 0x%x\n",
@@ -1573,6 +1624,10 @@ static void ibmvmc_task(unsigned long data)
 		while ((crq = crq_queue_next_crq(&adapter->queue)) != NULL) {
 			ibmvmc_handle_crq(crq, adapter);
 			crq->valid = 0x00;
+			/* CRQ reset was requested, stop processing CRQs.  Interrupts
+			   will be re-enabled by the reset task. */
+			if (ibmvmc.state == ibmvmc_state_sched_reset)
+				return;
 		}
 
 		vio_enable_interrupts(vdev);
@@ -1581,6 +1636,10 @@ static void ibmvmc_task(unsigned long data)
 			vio_disable_interrupts(vdev);
 			ibmvmc_handle_crq(crq, adapter);
 			crq->valid = 0x00;
+			/* CRQ reset was requested, stop processing CRQs.  Interrupts
+			   will be re-enabled by the reset task. */
+			if (ibmvmc.state == ibmvmc_state_sched_reset)
+				return;
 		} else
 			done = 1;
 	}
@@ -1723,11 +1782,21 @@ static int ibmvmc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	pr_debug("ibmvmc: Probe: liobn 0x%x, riobn 0x%x\n", adapter->liobn,
 			adapter->riobn);
 
+	init_waitqueue_head(&adapter->reset_wait_queue);
+	adapter->reset_task = kthread_run(ibmvmc_reset_task, adapter, "ibmvmc");
+	if (IS_ERR(adapter->reset_task)) {
+		pr_err("ibmvmc: Failed to start reset thread\n");
+		ibmvmc.state = ibmvmc_state_failed;
+		rc = PTR_ERR(adapter->reset_task);
+		adapter->reset_task = NULL;
+		return rc;
+	}
+
 	rc = ibmvmc_init_crq_queue(adapter);
 	if (rc != 0 && rc != H_RESOURCE) {
 		pr_err("ibmvmc: Error initializing CRQ.  rc = 0x%x\n", rc);
 		ibmvmc.state = ibmvmc_state_failed;
-		return -1;
+		goto crq_failed;
 	}
 
 	ibmvmc.state = ibmvmc_state_crqinit;
@@ -1743,6 +1812,11 @@ static int ibmvmc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	dev_set_drvdata(&vdev->dev, adapter);
 
 	return 0;
+
+crq_failed:
+	kthread_stop(adapter->reset_task);
+	adapter->reset_task = NULL;
+	return -EPERM;
 }
 
 static int ibmvmc_remove(struct vio_dev *vdev)
