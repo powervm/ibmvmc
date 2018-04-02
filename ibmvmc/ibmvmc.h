@@ -160,7 +160,6 @@ struct crq_queue {
 
 /* VMC server adapter settings */
 struct crq_server_adapter {
-	char name[16];
 	struct device *dev;
 	struct crq_queue queue;
 	u32 liobn;

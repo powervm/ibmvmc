@@ -1764,7 +1764,6 @@ static int ibmvmc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	dev_set_drvdata(&vdev->dev, NULL);
 	memset(adapter, 0, sizeof(*adapter));
 	adapter->dev = &vdev->dev;
-	sprintf(adapter->name, "%s:%x", ibmvmc_driver_name, vdev->unit_address);
 
 	rc = read_dma_window(vdev, adapter);
 	if (rc != 0) {
