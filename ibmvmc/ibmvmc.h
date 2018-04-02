@@ -116,7 +116,7 @@ struct ibmvmc_buffer {
 	void *real_addr_local;
 };
 
-struct crq_msg_ibmvmc_admin {
+struct ibmvmc_admin_crq_msg {
 	u8 valid;     /* RPA Defined           */
 	u8 type;      /* ibmvmc msg type       */
 	u8 status;    /* Response msg status   */
@@ -128,7 +128,7 @@ struct crq_msg_ibmvmc_admin {
 	__be16 version;
 };
 
-struct crq_msg_ibmvmc {
+struct ibmvmc_crq_msg {
 	u8 valid;     /* RPA Defined           */
 	u8 type;      /* ibmvmc msg type       */
 	u8 status;    /* Response msg status   */
@@ -152,7 +152,7 @@ struct crq_msg_ibmvmc {
 
 /* an RPA command/response transport queue */
 struct crq_queue {
-	struct crq_msg_ibmvmc *msgs;
+	struct ibmvmc_crq_msg *msgs;
 	int size, cur;
 	dma_addr_t msg_token;
 	spinlock_t lock;
