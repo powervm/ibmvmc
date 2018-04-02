@@ -44,12 +44,6 @@
 
 #define IBMVMC_DRIVER_VERSION "1.0"
 
-MODULE_DESCRIPTION("IBM VMC");
-MODULE_AUTHOR("Steven Royer <seroyer@linux.vnet.ibm.com>");
-MODULE_LICENSE("GPL");
-MODULE_VERSION(IBMVMC_DRIVER_VERSION);
-
-
 /*
  * Static global variables
  */
@@ -64,16 +58,6 @@ static struct crq_server_adapter ibmvmc_adapter;
 static int ibmvmc_max_buf_pool_size = DEFAULT_BUF_POOL_SIZE;
 static int ibmvmc_max_hmcs = DEFAULT_HMCS;
 static int ibmvmc_max_mtu = DEFAULT_MTU;
-
-/* Module parameters */
-module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size,
-		   int, 0644);
-MODULE_PARM_DESC(buf_pool_size, "Buffer pool size");
-module_param_named(max_hmcs, ibmvmc_max_hmcs, int, 0644);
-MODULE_PARM_DESC(max_hmcs, "Max HMCs");
-module_param_named(max_mtu, ibmvmc_max_mtu, int, 0644);
-MODULE_PARM_DESC(max_mtu, "Max MTU");
-
 
 static inline long h_copy_rdma(s64 length, u64 sliobn, u64 slioba,
 	u64 dliobn, u64 dlioba)
@@ -1833,7 +1817,6 @@ static struct vio_device_id ibmvmc_device_table[] = {
 	{ "ibm,vmc", "IBM,vmc" },
 	{ "", "" }
 };
-
 MODULE_DEVICE_TABLE(vio, ibmvmc_device_table);
 
 static struct vio_driver ibmvmc_driver = {
@@ -1937,3 +1920,16 @@ static void __exit ibmvmc_module_exit(void)
 
 module_init(ibmvmc_module_init);
 module_exit(ibmvmc_module_exit);
+
+module_param_named(buf_pool_size, ibmvmc_max_buf_pool_size,
+		   int, 0644);
+MODULE_PARM_DESC(buf_pool_size, "Buffer pool size");
+module_param_named(max_hmcs, ibmvmc_max_hmcs, int, 0644);
+MODULE_PARM_DESC(max_hmcs, "Max HMCs");
+module_param_named(max_mtu, ibmvmc_max_mtu, int, 0644);
+MODULE_PARM_DESC(max_mtu, "Max MTU");
+
+MODULE_AUTHOR("Steven Royer <seroyer@linux.vnet.ibm.com>");
+MODULE_DESCRIPTION("IBM VMC");
+MODULE_VERSION(IBMVMC_DRIVER_VERSION);
+MODULE_LICENSE("GPL");
