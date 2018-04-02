@@ -141,9 +141,8 @@ static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 	free_irq(vdev->irq, (void *)adapter);
 	tasklet_kill(&adapter->work_task);
 
-	if (adapter->reset_task) {
+	if (adapter->reset_task)
 		kthread_stop(adapter->reset_task);
-	}
 
 	h_free_crq(vdev->unit_address);
 	dma_unmap_single(adapter->dev,
@@ -214,8 +213,8 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 	long rc;
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
 
-	pr_debug("ibmvmc: ibmvmc_send_crq(0x%x, 0x%016llx, 0x%016llx)\n",
-			vdev->unit_address, word1, word2);
+	pr_debug("ibmvmc: %s(0x%x, 0x%016llx, 0x%016llx)\n",
+			__func__, vdev->unit_address, word1, word2);
 
 	/*
 	 * Ensure the command buffer is flushed to memory before handing it
@@ -223,7 +222,7 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 	 */
 	mb();
 	rc = plpar_hcall_norets(H_SEND_CRQ, vdev->unit_address, word1, word2);
-	pr_debug("ibmvmc: ibmvmc_send_crq rc = 0x%lx\n", rc);
+	pr_debug("ibmvmc: %s rc = 0x%lx\n", __func__, rc);
 
 	return rc;
 }
@@ -809,7 +808,7 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	}
 
 	if (count > ibmvmc.max_mtu) {
-		pr_warn("ibmvmc_write: invalid buffer size 0x%lx\n",
+		pr_warn("%s: invalid buffer size 0x%lx\n", __func__
 		     (unsigned long)count);
 		ret = -EIO;
 		goto out;
@@ -839,7 +838,7 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 		goto out;
 	}
 	if (vmc_buffer->real_addr_local == NULL) {
-		pr_err("ibmvmc_write: no buffer storage assigned\n");
+		pr_err("%s: no buffer storage assigned\n", __func__);
 		ret = -EIO;
 		goto out;
 	}
@@ -1365,22 +1364,28 @@ static int ibmvmc_validate_hmc_session(struct ibmvmc_crq_msg *crq)
 static void ibmvmc_reset(struct crq_server_adapter *adapter, bool xport_event)
 {
 	int i;
+
 	if (ibmvmc.state != ibmvmc_state_sched_reset) {
 		pr_info("ibmvmc: *** Reset to initial state.\n");
 		for (i = 0; i < ibmvmc_max_hmcs; i++)
 			ibmvmc_return_hmc(&hmcs[i], xport_event);
 
 		if (xport_event) {
-			/* CRQ was closed by the partner.  We don't need to do anything
-			   except set ourself to the correct state to handle init msgs. */
+			/* CRQ was closed by the partner.  We don't need to do
+			 * anything except set ourself to the correct state to
+			 * handle init msgs.
+			 */
 			ibmvmc.state = ibmvmc_state_crqinit;
 		} else {
-			/* The partner did not close their CRQ - instead, we're closing
-			   the CRQ on our end. Need to schedule this for process context,
-			   because CRQ reset may require a sleep.
-
-			   Setting ibmvmc.state here immediately prevents ibmvmc_open
-			   from completing until the reset completes in process context. */
+			/* The partner did not close their CRQ - instead, we're
+			 * closing the CRQ on our end. Need to schedule this
+			 * for process context, because CRQ reset may require a
+			 * sleep.
+			 *
+			 * Setting ibmvmc.state here immediately prevents
+			 * ibmvmc_open from completing until the reset
+			 * completes in process context.
+			 */
 			ibmvmc.state = ibmvmc_state_sched_reset;
 			pr_debug("ibmvmc: Device reset scheduled");
 			wake_up_interruptible(&adapter->reset_wait_queue);
@@ -1394,13 +1399,14 @@ static void ibmvmc_reset(struct crq_server_adapter *adapter, bool xport_event)
  */
 static int ibmvmc_reset_task(void *data)
 {
-	struct crq_server_adapter* adapter = data;
+	struct crq_server_adapter *adapter = data;
 
 	set_user_nice(current, -20);
 
 	while (!kthread_should_stop()) {
 		int rc = wait_event_interruptible(adapter->reset_wait_queue,
-		   (ibmvmc.state == ibmvmc_state_sched_reset) || kthread_should_stop());
+				(ibmvmc.state == ibmvmc_state_sched_reset)
+				|| kthread_should_stop());
 
 		if (kthread_should_stop())
 			break;
@@ -1419,8 +1425,8 @@ static int ibmvmc_reset_task(void *data)
 		} else {
 			ibmvmc.state = ibmvmc_state_crqinit;
 
-			if (ibmvmc_send_crq(adapter, 0xC001000000000000LL, 0) != 0
-						&& rc != H_RESOURCE)
+			if (ibmvmc_send_crq(adapter, 0xC001000000000000LL, 0)
+			    != 0 && rc != H_RESOURCE)
 				pr_warn("ibmvmc: Failed to send initialize CRQ message\n");
 		}
 
@@ -1459,7 +1465,7 @@ static void ibmvmc_process_open_resp(struct ibmvmc_crq_msg *crq,
 			hmcs[hmc_index].state = ibmhmc_state_failed;
 		} else {
 			ibmvmc_free_hmc_buffer(&(hmcs[hmc_index]),
-					       &(hmcs[hmc_index].buffer[buffer_id]));
+				&(hmcs[hmc_index].buffer[buffer_id]));
 			hmcs[hmc_index].state = ibmhmc_state_ready;
 			pr_debug("ibmvmc: open_resp: set hmc state = ready\n");
 		}
@@ -1608,8 +1614,9 @@ static void ibmvmc_task(unsigned long data)
 		while ((crq = crq_queue_next_crq(&adapter->queue)) != NULL) {
 			ibmvmc_handle_crq(crq, adapter);
 			crq->valid = 0x00;
-			/* CRQ reset was requested, stop processing CRQs.  Interrupts
-			   will be re-enabled by the reset task. */
+			/* CRQ reset was requested, stop processing CRQs.
+			 * Interrupts will be re-enabled by the reset task.
+			 */
 			if (ibmvmc.state == ibmvmc_state_sched_reset)
 				return;
 		}
@@ -1620,8 +1627,9 @@ static void ibmvmc_task(unsigned long data)
 			vio_disable_interrupts(vdev);
 			ibmvmc_handle_crq(crq, adapter);
 			crq->valid = 0x00;
-			/* CRQ reset was requested, stop processing CRQs.  Interrupts
-			   will be re-enabled by the reset task. */
+			/* CRQ reset was requested, stop processing CRQs.
+			 * Interrupts will be re-enabled by the reset task.
+			 */
 			if (ibmvmc.state == ibmvmc_state_sched_reset)
 				return;
 		} else
