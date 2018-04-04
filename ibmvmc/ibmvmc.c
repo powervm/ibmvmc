@@ -95,6 +95,9 @@ static inline void h_free_crq(uint32_t unit_address)
  * Requests the hypervisor create a new virtual management channel device,
  * allowing this partition to send hypervisor virtualization control commands.
  *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
  */
 static inline long h_request_vmc(u32 *vmc_index)
 {
@@ -121,6 +124,7 @@ static inline long h_request_vmc(u32 *vmc_index)
  * @dev_instance: crq_server_adapter that received interrupt
  *
  * Disables interrupts and schedules ibmvmc_task
+ *
  * Always returns IRQ_HANDLED
  */
 static irqreturn_t ibmvmc_handle_event(int irq, void *dev_instance)
@@ -134,6 +138,15 @@ static irqreturn_t ibmvmc_handle_event(int irq, void *dev_instance)
 	return IRQ_HANDLED;
 }
 
+/**
+ * ibmvmc_release_crq_queue - Release CRQ Queue
+ *
+ * @adapter:	crq_server_adapter struct
+ *
+ * Return:
+ *	0 - Success
+ *	Non-Zero - Failure
+ */
 static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 {
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
@@ -152,6 +165,18 @@ static void ibmvmc_release_crq_queue(struct crq_server_adapter *adapter)
 	free_page((unsigned long)queue->msgs);
 }
 
+/**
+ * ibmvmc_reset_crq_queue - Reset CRQ Queue
+ *
+ * @adapter:	crq_server_adapter struct
+ *
+ * This function calls h_free_crq and then calls H_REG_CRQ and does all the
+ * bookkeeping to get us back to where we can communicate.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-Zero - Failure
+ */
 static int ibmvmc_reset_crq_queue(struct crq_server_adapter *adapter)
 {
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
@@ -208,6 +233,17 @@ static struct ibmvmc_crq_msg *crq_queue_next_crq(struct crq_queue *queue)
 	return crq;
 }
 
+/**
+ * ibmvmc_send_crq - Send CRQ
+ *
+ * @adapter:	crq_server_adapter struct
+ * @word1:	Word1 Data field
+ * @word2:	Word2 Data field
+ *
+ * Return:
+ *	0 - Success
+ *	Non-Zero - Failure
+ */
 static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 			u64 word1, u64 word2)
 {
@@ -228,6 +264,17 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 	return rc;
 }
 
+/**
+ * alloc_dma_buffer - Create DMA Buffer
+ *
+ * @vdev:	vio_dev struct
+ * @size:	Size field
+ * @dma_handle:	DMA address field
+ *
+ * Allocates memory for the command queue and maps remote memory into an ioba.
+ *
+ * Returns a pointer to the buffer
+ */
 static void *alloc_dma_buffer(struct vio_dev *vdev, size_t size,
 				dma_addr_t *dma_handle)
 {
@@ -252,6 +299,16 @@ static void *alloc_dma_buffer(struct vio_dev *vdev, size_t size,
 	return buffer;
 }
 
+/**
+ * free_dma_buffer - Free DMA Buffer
+ *
+ * @vdev:	vio_dev struct
+ * @size:	Size field
+ * @vaddr:	Address field
+ * @dma_handle:	DMA address field
+ *
+ * Releases memory for a command queue and unmaps mapped remote memory.
+ */
 static void free_dma_buffer(struct vio_dev *vdev, size_t size, void *vaddr,
 			    dma_addr_t dma_handle)
 {
@@ -262,6 +319,14 @@ static void free_dma_buffer(struct vio_dev *vdev, size_t size, void *vaddr,
 	kzfree(vaddr);
 }
 
+/**
+ * ibmvmc_get_valid_hmc_buffer - Retrieve Valid HMC Buffer
+ *
+ * @hmc_index:	HMC Index Field
+ *
+ * Return:
+ *	Pointer to ibmvmc_buffer
+ */
 static struct ibmvmc_buffer *ibmvmc_get_valid_hmc_buffer(u8 hmc_index)
 {
 	struct ibmvmc_buffer *buffer;
@@ -285,6 +350,15 @@ static struct ibmvmc_buffer *ibmvmc_get_valid_hmc_buffer(u8 hmc_index)
 	return ret_buf;
 }
 
+/**
+ * ibmvmc_get_free_hmc_buffer - Get Free HMC Buffer
+ *
+ * @adapter:	crq_server_adapter struct
+ * @hmc_index:	Hmc Index field
+ *
+ * Return:
+ *	Pointer to ibmvmc_buffer
+ */
 static struct ibmvmc_buffer *ibmvmc_get_free_hmc_buffer(struct crq_server_adapter *adapter,
 							u8 hmc_index)
 {
@@ -312,6 +386,13 @@ static struct ibmvmc_buffer *ibmvmc_get_free_hmc_buffer(struct crq_server_adapte
 	return ret_buf;
 }
 
+/**
+ * ibmvmc_free_hmc_buffer - Free an HMC Buffer
+ *
+ * @hmc:	ibmvmc_hmc struct
+ * @buffer:	ibmvmc_buffer struct
+ *
+ */
 static void ibmvmc_free_hmc_buffer(struct ibmvmc_hmc *hmc,
 				   struct ibmvmc_buffer *buffer)
 {
@@ -322,6 +403,14 @@ static void ibmvmc_free_hmc_buffer(struct ibmvmc_hmc *hmc,
 	spin_unlock_irqrestore(&(hmc->lock), flags);
 }
 
+/**
+ * ibmvmc_count_hmc_buffers - Count HMC Buffers
+ *
+ * @hmc_index:	HMC Index field
+ * @valid:	Valid number of buffers field
+ * @free:	Free number of buffers field
+ *
+ */
 static void ibmvmc_count_hmc_buffers(u8 hmc_index, unsigned int *valid,
 				     unsigned int *free)
 {
@@ -351,6 +440,13 @@ static void ibmvmc_count_hmc_buffers(u8 hmc_index, unsigned int *valid,
 	spin_unlock_irqrestore(&(hmcs[hmc_index].lock), flags);
 }
 
+/**
+ * ibmvmc_get_free_hmc - Get Free HMC
+ *
+ * Return:
+ *	Pointer to an available HMC Connection
+ *	Null otherwise
+ */
 static struct ibmvmc_hmc *ibmvmc_get_free_hmc(void)
 {
 	unsigned long i;
@@ -373,6 +469,18 @@ static struct ibmvmc_hmc *ibmvmc_get_free_hmc(void)
 	return NULL;
 }
 
+/**
+ * ibmvmc_return_hmc - Return an HMC Connection
+ *
+ * @hmc:	ibmvmc_hmc struct
+ * @bReleaseReaders:	Number of readers connected to session
+ *
+ * This function releases the HMC connections back into the pool.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc, bool bReleaseReaders)
 {
 	struct ibmvmc_buffer *buffer;
@@ -420,6 +528,24 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc, bool bReleaseReaders)
 	return 0;
 }
 
+/**
+ * ibmvmc_send_open - Interface Open
+ * @buffer: Pointer to ibmvmc_buffer struct
+ * @hmc: Pointer to ibmvmc_hmc struct
+ *
+ * This command is sent by the management partition as the result of a
+ * management partition device request. It causes the hypervisor to
+ * prepare a set of data buffers for the LPM connection indicated HMC idx.
+ * A unique HMC Idx would be used if multiple management applications running
+ * concurrently were desired. Before responding to this command, the
+ * hypervisor must provide the management partition with at least one of these
+ * new buffers via the Add Buffer. This indicates whether the messages are
+ * inbound or outbound from the hypervisor.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_send_open(struct ibmvmc_buffer *buffer,
 		     struct ibmvmc_hmc *hmc)
 {
@@ -468,6 +594,19 @@ static int ibmvmc_send_open(struct ibmvmc_buffer *buffer,
 	return rc;
 }
 
+/**
+ * ibmvmc_send_close - Interface Close
+ * @hmc: Pointer to ibmvmc_hmc struct
+ *
+ * This command is sent by the management partition to terminate an LPM to
+ * hypervisor connection. When this command is sent, the management
+ * partition has quiesced all I/O operations to all buffers associated with
+ * this LPM connection, and has freed any storage for these buffers.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_send_close(struct ibmvmc_hmc *hmc)
 {
 	struct ibmvmc_crq_msg crq_msg;
@@ -498,6 +637,22 @@ static int ibmvmc_send_close(struct ibmvmc_hmc *hmc)
 	return rc;
 }
 
+/**
+ * ibmvmc_send_capabilities - Send VMC Capabilities
+ *
+ * @adapter:	crq_server_adapter struct
+ *
+ * The capabilities message is an administrative message sent after the CRQ
+ * initialization sequence of messages and is used to exchange VMC capabilities
+ * between the management partition and the hypervisor. The management
+ * partition must send this message and the hypervisor must respond with VMC
+ * capabilities Response message before HMC interface message can begin. Any
+ * HMC interface messages received before the exchange of capabilities has
+ * complete are dropped.
+ *
+ * Return:
+ *	0 - Success
+ */
 static int ibmvmc_send_capabilities(struct crq_server_adapter *adapter)
 {
 	struct ibmvmc_admin_crq_msg crq_msg;
@@ -523,6 +678,22 @@ static int ibmvmc_send_capabilities(struct crq_server_adapter *adapter)
 	return 0;
 }
 
+/**
+ * ibmvmc_send_add_buffer_resp - Add Buffer Response
+ *
+ * @adapter:	crq_server_adapter struct
+ * @status:	Status field
+ * @hmc_session: HMC Session field
+ * @hmc_index:	HMC Index field
+ * @buffer_id:	Buffer Id field
+ *
+ * This command is sent by the management partition to the hypervisor in
+ * response to the Add Buffer message. The Status field indicates the result of
+ * the command.
+ *
+ * Return:
+ *	0 - Success
+ */
 static int ibmvmc_send_add_buffer_resp(struct crq_server_adapter *adapter,
 		u8 status, u8 hmc_session, u8 hmc_index, u16 buffer_id)
 {
@@ -546,6 +717,23 @@ static int ibmvmc_send_add_buffer_resp(struct crq_server_adapter *adapter,
 	return 0;
 }
 
+/**
+ * ibmvmc_send_rem_buffer_resp - Remove Buffer Response
+ *
+ * @adapter:	crq_server_adapter struct
+ * @status:	Status field
+ * @hmc_session: HMC Session field
+ * @hmc_index:	HMC Index field
+ * @buffer_id:	Buffer Id field
+ *
+ * This command is sent by the management partition to the hypervisor in
+ * response to the Remove Buffer message. The Buffer ID field indicates
+ * which buffer the management partition selected to remove. The Status
+ * field indicates the result of the command.
+ *
+ * Return:
+ *	0 - Success
+ */
 static int ibmvmc_send_rem_buffer_resp(struct crq_server_adapter *adapter,
 		u8 status, u8 hmc_session, u8 hmc_index, u16 buffer_id)
 {
@@ -569,6 +757,26 @@ static int ibmvmc_send_rem_buffer_resp(struct crq_server_adapter *adapter,
 	return 0;
 }
 
+/**
+ * ibmvmc_send_msg - Signal Message
+ *
+ * @adapter:	crq_server_adapter struct
+ * @buffer:	ibmvmc_buffer struct
+ * @hmc:	ibmvmc_hmc struct
+ * @msg_length:	message length field
+ *
+ * This command is sent between the management partition and the hypervisor
+ * in order to signal the arrival of an HMC protocol message. The command
+ * can be sent by both the management partition and the hypervisor. It is
+ * used for all traffic between the LPM application and the hypervisor,
+ * regardless of who initiated the communication.
+ *
+ * There is no response to this message.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_send_msg(struct crq_server_adapter *adapter,
 			   struct ibmvmc_buffer *buffer,
 			   struct ibmvmc_hmc *hmc, int msg_len)
@@ -607,6 +815,15 @@ static int ibmvmc_send_msg(struct crq_server_adapter *adapter,
 	return rc;
 }
 
+/**
+ * ibmvmc_open - Open Session
+ *
+ * @inode:	inode struct
+ * @file:	file struct
+ *
+ * Return:
+ *	0 - Success
+ */
 static int ibmvmc_open(struct inode *inode, struct file *file)
 {
 	struct ibmvmc_file_session *session;
@@ -623,6 +840,16 @@ static int ibmvmc_open(struct inode *inode, struct file *file)
 	return rc;
 }
 
+/**
+ * ibmvmc_close - Close Session
+ *
+ * @inode:	inode struct
+ * @file:	file struct
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_close(struct inode *inode, struct file *file)
 {
 	struct ibmvmc_file_session *session;
@@ -661,6 +888,18 @@ static int ibmvmc_close(struct inode *inode, struct file *file)
 	return rc;
 }
 
+/**
+ * ibmvmc_read - Read
+ *
+ * @file:	file struct
+ * @buf:	Character buffer
+ * @nbytes:	Size in bytes
+ * @ppos:	Offset
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 		loff_t *ppos)
 {
@@ -753,6 +992,15 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 	return retval;
 }
 
+/**
+ * ibmvmc_poll - Poll
+ *
+ * @file:	file struct
+ * @wait:	Poll Table
+ *
+ * Return:
+ *	poll.h return values
+ */
 static unsigned int ibmvmc_poll(struct file *file, poll_table *wait)
 {
 	struct ibmvmc_file_session *session;
@@ -775,6 +1023,18 @@ static unsigned int ibmvmc_poll(struct file *file, poll_table *wait)
 	return mask;
 }
 
+/**
+ * ibmvmc_write - Write
+ *
+ * @file:	file struct
+ * @buf:	Character buffer
+ * @count:	Count field
+ * @ppos:	Offset
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	  size_t count, loff_t *ppos)
 {
@@ -874,6 +1134,15 @@ static ssize_t ibmvmc_write(struct file *file, const char *buffer,
 	return (ssize_t)(ret);
 }
 
+/**
+ * ibmvmc_setup_hmc - Setup the HMC
+ *
+ * @session:	ibmvmc_file_session struct
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 {
 	struct ibmvmc_hmc *hmc;
@@ -921,6 +1190,18 @@ static long ibmvmc_setup_hmc(struct ibmvmc_file_session *session)
 	return 0;
 }
 
+/**
+ * ibmvmc_ioctl_sethmcid - IOCTL Set HMC ID
+ *
+ * @session:	ibmvmc_file_session struct
+ * @new_hmc_id:	HMC id field
+ *
+ * IOCTL command to setup the hmc id
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 		unsigned char __user *new_hmc_id)
 {
@@ -977,6 +1258,16 @@ static long ibmvmc_ioctl_sethmcid(struct ibmvmc_file_session *session,
 	return rc;
 }
 
+/**
+ * ibmvmc_ioctl_query - IOCTL Query
+ *
+ * @session:	ibmvmc_file_session struct
+ * @ret_struct:	ibmvmc_query_struct
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
 		struct ibmvmc_query_struct __user *ret_struct)
 {
@@ -996,6 +1287,16 @@ static long ibmvmc_ioctl_query(struct ibmvmc_file_session *session,
 	return 0;
 }
 
+/**
+ * ibmvmc_ioctl_requestvmc - IOCTL Request VMC
+ *
+ * @session:	ibmvmc_file_session struct
+ * @ret_vmc_index:	VMC Index
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static long ibmvmc_ioctl_requestvmc(struct ibmvmc_file_session *session,
 		u32 __user *ret_vmc_index)
 {
@@ -1042,6 +1343,17 @@ static long ibmvmc_ioctl_requestvmc(struct ibmvmc_file_session *session,
 	return rc;
 }
 
+/**
+ * ibmvmc_ioctl - IOCTL
+ *
+ * @session:	ibmvmc_file_session struct
+ * @cmd:	cmd field
+ * @arg:	Argument field
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static long ibmvmc_ioctl(struct file *file,
 	  unsigned int cmd, unsigned long arg)
 {
@@ -1082,7 +1394,31 @@ static const struct file_operations ibmvmc_fops = {
 	.release        = ibmvmc_close,
 };
 
-
+/**
+ * ibmvmc_add_buffer - Add Buffer
+ *
+ * @adapter: crq_server_adapter struct
+ * @crq:	ibmvmc_crq_msg struct
+ *
+ * This message transfers a buffer from hypervisor ownership to management
+ * partition ownership. The LIOBA is obtained from the virtual TCE table
+ * associated with the hypervisor side of the VMC device, and points to a
+ * buffer of size MTU (as established in the capabilities exchange).
+ *
+ * Typical flow for ading buffers:
+ * 1. A new LPM connection is opened by the management partition.
+ * 2. The hypervisor assigns new buffers for the traffic associated with
+ *	that connection.
+ * 3. The hypervisor sends VMC Add Buffer messages to the management
+ *	partition, informing it of the new buffers.
+ * 4. The hypervisor sends an HMC protocol message (to the LPM application)
+ *	notifying it of the new buffers. This informs the application that
+ *	it has buffers available for sending HMC commands.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_add_buffer(struct crq_server_adapter *adapter,
 		struct ibmvmc_crq_msg *crq)
 {
@@ -1163,6 +1499,37 @@ static int ibmvmc_add_buffer(struct crq_server_adapter *adapter,
 	return rc;
 }
 
+/**
+ * ibmvmc_rem_buffer - Remove Buffer
+ *
+ * @adapter: crq_server_adapter struct
+ * @crq:	ibmvmc_crq_msg struct
+ *
+ * This message requests an HMC buffer to be transferred from management
+ * partition ownership to hypervisor ownership. The management partition may
+ * not be able to satisfy the request at a particular point in time if all its
+ * buffers are in use. The management partition requires a depth of at least
+ * one inbound buffer to allow LPM commands to flow to the hypervisor. It is,
+ * therefore, an interface error for the hypervisor to attempt to remove the
+ * management partition's last buffer.
+ *
+ * The hypervisor is expected to manage buffer usage with the LPM application
+ * directly and inform the management partition when buffers may be removed.
+ * The typical flow for removing buffers:
+ * 1. The LPM application no longer needs a communication path to a particular
+ *	hypervisor function. That function is closed.
+ * 2. The hypervisor and the LPM application quiesce all traffic to that
+ *	function. The hypervisor requests a reduction in buffer pool size.
+ * 3. The LPM application acknowledges the reduction in buffer pool size.
+ * 4. The hypervisor sends a Remove Buffer message to the management partition,
+ *	informing it of the reduction in buffers.
+ * 5. The management partition verifies it can remove the buffer. This is
+ *	possible if buffers have been quiesced.
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 /*
  * The hypervisor requested that we pick an unused buffer, and return it.
  * Before sending the buffer back, we free any storage associated with the
@@ -1318,6 +1685,13 @@ static int ibmvmc_recv_msg(struct crq_server_adapter *adapter,
 	return 0;
 }
 
+/**
+ * ibmvmc_process_capabilities - Process Capabilities
+ *
+ * @adapter:	crq_server_adapter struct
+ * @crqp:	ibmvmc_crq_msg struct
+ *
+ */
 static void ibmvmc_process_capabilities(struct crq_server_adapter *adapter,
 					struct ibmvmc_crq_msg *crqp)
 {
@@ -1343,6 +1717,16 @@ static void ibmvmc_process_capabilities(struct crq_server_adapter *adapter,
 		 ibmvmc.max_hmc_index);
 }
 
+/**
+ * ibmvmc_validate_hmc_session - Validate HMC Session
+ *
+ * @adapter:	crq_server_adapter struct
+ * @crq:	ibmvmc_crq_msg struct
+ *
+ * Return:
+ *	0 - Success
+ *	Non-zero - Failure
+ */
 static int ibmvmc_validate_hmc_session(struct crq_server_adapter *adapter,
 				       struct ibmvmc_crq_msg *crq)
 {
@@ -1366,6 +1750,11 @@ static int ibmvmc_validate_hmc_session(struct crq_server_adapter *adapter,
 }
 
 /**
+ * ibmvmc_reset - Reset
+ *
+ * @adapter:	crq_server_adapter struct
+ * @xport_event:	export_event field
+ *
  * Closes all HMC sessions and conditionally schedules a CRQ reset.
  * @xport_event: If true, the partner closed their CRQ; we don't need to reset.
  *               If false, we need to schedule a CRQ reset.
@@ -1403,6 +1792,10 @@ static void ibmvmc_reset(struct crq_server_adapter *adapter, bool xport_event)
 }
 
 /**
+ * ibmvmc_reset_task - Reset Task
+ *
+ * @data:	Data field
+ *
  * Performs a CRQ reset of the VMC device in process context.
  * NOTE: This function should not be called directly, use ibmvmc_reset.
  */
@@ -1446,6 +1839,16 @@ static int ibmvmc_reset_task(void *data)
 	return 0;
 }
 
+/**
+ * ibmvmc_process_open_resp - Process Open Response
+ *
+ * @crq: ibmvmc_crq_msg struct
+ * @adapter:    crq_server_adapter struct
+ *
+ * This command is sent by the hypervisor in response to the Interface
+ * Open message. When this message is received, the indicated buffer is
+ * again available for management partition use.
+ */
 static void ibmvmc_process_open_resp(struct ibmvmc_crq_msg *crq,
 				     struct crq_server_adapter *adapter)
 {
@@ -1483,7 +1886,15 @@ static void ibmvmc_process_open_resp(struct ibmvmc_crq_msg *crq,
 			 hmcs[hmc_index].state);
 }
 
-/*
+/**
+ * ibmvmc_process_close_resp - Process Close Response
+ *
+ * @crq: ibmvmc_crq_msg struct
+ * @adapter:    crq_server_adapter struct
+ *
+ * This command is sent by the hypervisor in response to the LPM Interface
+ * Close message.
+ *
  * If the close fails, simply reset the entire driver as the state of the VMC
  * must be in tough shape.
  */
@@ -1508,6 +1919,15 @@ static void ibmvmc_process_close_resp(struct ibmvmc_crq_msg *crq,
 	ibmvmc_return_hmc(&hmcs[hmc_index], false);
 }
 
+/**
+ * ibmvmc_crq_process - Process CRQ
+ *
+ * @adapter:    crq_server_adapter struct
+ * @crq:	ibmvmc_crq_msg struct
+ *
+ * Process the CRQ message based upon the type of message received.
+ *
+ */
 static void ibmvmc_crq_process(struct crq_server_adapter *adapter,
 		struct ibmvmc_crq_msg *crq)
 {
@@ -1566,6 +1986,16 @@ static void ibmvmc_crq_process(struct crq_server_adapter *adapter,
 	}
 }
 
+/**
+ * ibmvmc_handle_crq_init - Handle CRQ Init
+ *
+ * @crq:	ibmvmc_crq_msg struct
+ * @adapter:	crq_server_adapter struct
+ *
+ * Handle the type of crq initialization based on whether
+ * it is a message or a response.
+ *
+ */
 static void ibmvmc_handle_crq_init(struct ibmvmc_crq_msg *crq,
 		struct crq_server_adapter *adapter)
 {
@@ -1597,6 +2027,16 @@ static void ibmvmc_handle_crq_init(struct ibmvmc_crq_msg *crq,
 	}
 }
 
+/**
+ * ibmvmc_handle_crq - Handle CRQ
+ *
+ * @crq:	ibmvmc_crq_msg struct
+ * @adapter:	crq_server_adapter struct
+ *
+ * Read the command elements from the command queue and execute the
+ * requests based upon the type of crq message.
+ *
+ */
 static void ibmvmc_handle_crq(struct ibmvmc_crq_msg *crq,
 		struct crq_server_adapter *adapter)
 {
@@ -1654,6 +2094,15 @@ static void ibmvmc_task(unsigned long data)
 	}
 }
 
+/**
+ * ibmvmc_init_crq_queue - Init CRQ Queue
+ *
+ * @adapter:	crq_server_adapter struct
+ *
+ * Return:
+ *	0 - Sucess
+ *	Non-zero - Failure
+ */
 static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 {
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
