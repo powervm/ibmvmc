@@ -26,12 +26,6 @@
 
 #define IBMVMC_PROTOCOL_VERSION    0x0101
 
-#define LOG_LEVEL_MIN     1
-#define LOG_LEVEL_NORM    3
-#define LOG_LEVEL_TRACE   7
-#define LOG_LEVEL_MAX     10
-#define DEFAULT_LOG_LEVEL LOG_LEVEL_NORM
-
 #define MIN_BUF_POOL_SIZE 16
 #define MIN_HMCS          1
 #define MIN_MTU           4096
@@ -44,8 +38,6 @@
 #define HMC_ID_LEN        32
 
 #define VMC_INVALID_BUFFER_ID 0xFFFF
-
-#define VMC_NUM_MINORS	1
 
 /* ioctl numbers */
 #define VMC_BASE	     0xCC
