@@ -66,7 +66,7 @@ static inline long h_copy_rdma(s64 length, u64 sliobn, u64 slioba,
 	long rc = 0;
 
 	/* Ensure all writes to source memory are visible before hcall */
-	mb();
+	dma_wmb();
 	pr_debug("ibmvmc: h_copy_rdma(0x%llx, 0x%llx, 0x%llx, 0x%llx, 0x%llx\n",
 			length, sliobn, slioba, dliobn, dlioba);
 	rc = plpar_hcall_norets(H_COPY_RDMA, length, sliobn, slioba,
@@ -199,7 +199,7 @@ static struct ibmvmc_crq_msg *crq_queue_next_crq(struct crq_queue *queue)
 		/* Ensure the read of the valid bit occurs before reading any
 		 * other bits of the CRQ entry
 		 */
-		rmb();
+		dma_rmb();
 	} else
 		crq = NULL;
 
@@ -221,7 +221,7 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 	 * Ensure the command buffer is flushed to memory before handing it
 	 * over to the other side to prevent it from fetching any stale data.
 	 */
-	mb();
+	dma_wmb();
 	rc = plpar_hcall_norets(H_SEND_CRQ, vdev->unit_address, word1, word2);
 	dev_dbg(adapter->dev, "rc = 0x%lx\n", rc);
 
@@ -1144,7 +1144,7 @@ static int ibmvmc_add_buffer(struct crq_server_adapter *adapter,
 	buffer->owner = crq->var1.owner;
 	buffer->free = 1;
 	/* Must ensure valid==1 is observable only after all other fields are */
-	mb();
+	dma_wmb();
 	buffer->valid = 1;
 	buffer->id = buffer_id;
 
