@@ -93,7 +93,8 @@ static inline void h_free_crq(uint32_t unit_address)
  * @vmc_index: drc index of the vmc device created
  *
  * Requests the hypervisor create a new virtual management channel device,
- * allowing this partition to send hypervisor virtualization control commands.
+ * allowing this partition to send hypervisor virtualization control
+ * commands.
  *
  * Return:
  *	0 - Success
@@ -271,7 +272,8 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
  * @size:	Size field
  * @dma_handle:	DMA address field
  *
- * Allocates memory for the command queue and maps remote memory into an ioba.
+ * Allocates memory for the command queue and maps remote memory into an
+ * ioba.
  *
  * Returns a pointer to the buffer
  */
@@ -535,7 +537,7 @@ static int ibmvmc_return_hmc(struct ibmvmc_hmc *hmc, bool bReleaseReaders)
  *
  * This command is sent by the management partition as the result of a
  * management partition device request. It causes the hypervisor to
- * prepare a set of data buffers for the LPM connection indicated HMC idx.
+ * prepare a set of data buffers for the Novalink connection indicated HMC idx.
  * A unique HMC Idx would be used if multiple management applications running
  * concurrently were desired. Before responding to this command, the
  * hypervisor must provide the management partition with at least one of these
@@ -598,10 +600,10 @@ static int ibmvmc_send_open(struct ibmvmc_buffer *buffer,
  * ibmvmc_send_close - Interface Close
  * @hmc: Pointer to ibmvmc_hmc struct
  *
- * This command is sent by the management partition to terminate an LPM to
+ * This command is sent by the management partition to terminate an Novalink to
  * hypervisor connection. When this command is sent, the management
  * partition has quiesced all I/O operations to all buffers associated with
- * this LPM connection, and has freed any storage for these buffers.
+ * this Novalink connection, and has freed any storage for these buffers.
  *
  * Return:
  *	0 - Success
@@ -768,7 +770,7 @@ static int ibmvmc_send_rem_buffer_resp(struct crq_server_adapter *adapter,
  * This command is sent between the management partition and the hypervisor
  * in order to signal the arrival of an HMC protocol message. The command
  * can be sent by both the management partition and the hypervisor. It is
- * used for all traffic between the LPM application and the hypervisor,
+ * used for all traffic between the Novalink application and the hypervisor,
  * regardless of who initiated the communication.
  *
  * There is no response to this message.
@@ -1406,12 +1408,12 @@ static const struct file_operations ibmvmc_fops = {
  * buffer of size MTU (as established in the capabilities exchange).
  *
  * Typical flow for ading buffers:
- * 1. A new LPM connection is opened by the management partition.
+ * 1. A new Novalink connection is opened by the management partition.
  * 2. The hypervisor assigns new buffers for the traffic associated with
  *	that connection.
  * 3. The hypervisor sends VMC Add Buffer messages to the management
  *	partition, informing it of the new buffers.
- * 4. The hypervisor sends an HMC protocol message (to the LPM application)
+ * 4. The hypervisor sends an HMC protocol message (to the Novalink application)
  *	notifying it of the new buffers. This informs the application that
  *	it has buffers available for sending HMC commands.
  *
@@ -1509,18 +1511,19 @@ static int ibmvmc_add_buffer(struct crq_server_adapter *adapter,
  * partition ownership to hypervisor ownership. The management partition may
  * not be able to satisfy the request at a particular point in time if all its
  * buffers are in use. The management partition requires a depth of at least
- * one inbound buffer to allow LPM commands to flow to the hypervisor. It is,
- * therefore, an interface error for the hypervisor to attempt to remove the
+ * one inbound buffer to allow Novalink commands to flow to the hypervisor. It
+ * is, therefore, an interface error for the hypervisor to attempt to remove the
  * management partition's last buffer.
  *
- * The hypervisor is expected to manage buffer usage with the LPM application
- * directly and inform the management partition when buffers may be removed.
- * The typical flow for removing buffers:
- * 1. The LPM application no longer needs a communication path to a particular
- *	hypervisor function. That function is closed.
- * 2. The hypervisor and the LPM application quiesce all traffic to that
+ * The hypervisor is expected to manage buffer usage with the Novalink
+ * application directly and inform the management partition when buffers may be
+ * removed. The typical flow for removing buffers:
+ *
+ * 1. The Novalink application no longer needs a communication path to a
+ *	particular hypervisor function. That function is closed.
+ * 2. The hypervisor and the Novalink application quiesce all traffic to that
  *	function. The hypervisor requests a reduction in buffer pool size.
- * 3. The LPM application acknowledges the reduction in buffer pool size.
+ * 3. The Novalink application acknowledges the reduction in buffer pool size.
  * 4. The hypervisor sends a Remove Buffer message to the management partition,
  *	informing it of the reduction in buffers.
  * 5. The management partition verifies it can remove the buffer. This is
@@ -1892,7 +1895,7 @@ static void ibmvmc_process_open_resp(struct ibmvmc_crq_msg *crq,
  * @crq: ibmvmc_crq_msg struct
  * @adapter:    crq_server_adapter struct
  *
- * This command is sent by the hypervisor in response to the LPM Interface
+ * This command is sent by the hypervisor in response to the Novalink Interface
  * Close message.
  *
  * If the close fails, simply reset the entire driver as the state of the VMC
@@ -2100,7 +2103,7 @@ static void ibmvmc_task(unsigned long data)
  * @adapter:	crq_server_adapter struct
  *
  * Return:
- *	0 - Sucess
+ *	0 - Success
  *	Non-zero - Failure
  */
 static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
