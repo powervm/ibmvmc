@@ -26,12 +26,6 @@
 
 #define IBMVMC_PROTOCOL_VERSION    0x0101
 
-#define LOG_LEVEL_MIN     1
-#define LOG_LEVEL_NORM    3
-#define LOG_LEVEL_TRACE   7
-#define LOG_LEVEL_MAX     10
-#define DEFAULT_LOG_LEVEL LOG_LEVEL_NORM
-
 #define MIN_BUF_POOL_SIZE 16
 #define MIN_HMCS          1
 #define MIN_MTU           4096
@@ -44,8 +38,6 @@
 #define HMC_ID_LEN        32
 
 #define VMC_INVALID_BUFFER_ID 0xFFFF
-
-#define VMC_NUM_MINORS	1
 
 /* ioctl numbers */
 #define VMC_BASE	     0xCC
@@ -105,8 +97,8 @@ enum ibmhmc_states {
 };
 
 struct ibmvmc_buffer {
-	u8 valid;    /* 1 when DMA storage allocated to buffer          */
-	u8 free;     /* 1 when buffer available for the Alpha Partition */
+	u8 valid;	/* 1 when DMA storage allocated to buffer          */
+	u8 free;	/* 1 when buffer available for the Alpha Partition */
 	u8 owner;
 	u16 id;
 	u32 size;
@@ -116,19 +108,32 @@ struct ibmvmc_buffer {
 	void *real_addr_local;
 };
 
-struct crq_msg_ibmvmc_admin {
-	u8 valid;     /* RPA Defined           */
-	u8 type;      /* ibmvmc msg type       */
-	u8 status;    /* Response msg status   */
+struct ibmvmc_admin_crq_msg {
+	u8 valid;	/* RPA Defined           */
+	u8 type;	/* ibmvmc msg type       */
+	u8 status;	/* Response msg status. Zero is success and on failure,
+			 * either 1 - General Failure, or 2 - Invalid Version is
+			 * returned.
+			 */
 	u8 rsvd[2];
-	u8 max_hmc;
-	__be16 pool_size;
-	__be32 max_mtu;
-	__be16 crq_size;
-	__be16 version;
+	u8 max_hmc;	/* Max # of independent HMC connections supported */
+	__be16 pool_size;	/* Maximum number of buffers supported per HMC
+				 * connection
+				 */
+	__be32 max_mtu;		/* Maximum message size supported (bytes) */
+	__be16 crq_size;	/* # of entries available in the CRQ for the
+				 * source partition. The target partition must
+				 * limit the number of outstanding messages to
+				 * one half or less.
+				 */
+	__be16 version;	/* Indicates the code level of the management partition
+			 * or the hypervisor with the high-order byte
+			 * indicating a major version and the low-order byte
+			 * indicating a minor version.
+			 */
 };
 
-struct crq_msg_ibmvmc {
+struct ibmvmc_crq_msg {
 	u8 valid;     /* RPA Defined           */
 	u8 type;      /* ibmvmc msg type       */
 	u8 status;    /* Response msg status   */
@@ -136,8 +141,10 @@ struct crq_msg_ibmvmc {
 		u8 rsvd;  /* Reserved              */
 		u8 owner;
 	} var1;
-	u8 hmc_session;
-	u8 hmc_index;
+	u8 hmc_session;	/* Session Identifier for the current VMC connection */
+	u8 hmc_index;	/* A unique HMC Idx would be used if multiple management
+			 * applications running concurrently were desired
+			 */
 	union {
 		__be16 rsvd;
 		__be16 buffer_id;
@@ -152,7 +159,7 @@ struct crq_msg_ibmvmc {
 
 /* an RPA command/response transport queue */
 struct crq_queue {
-	struct crq_msg_ibmvmc *msgs;
+	struct ibmvmc_crq_msg *msgs;
 	int size, cur;
 	dma_addr_t msg_token;
 	spinlock_t lock;
@@ -160,7 +167,6 @@ struct crq_queue {
 
 /* VMC server adapter settings */
 struct crq_server_adapter {
-	char name[16];
 	struct device *dev;
 	struct crq_queue queue;
 	u32 liobn;
