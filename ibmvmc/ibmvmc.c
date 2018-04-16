@@ -608,12 +608,12 @@ static int ibmvmc_send_close(struct ibmvmc_hmc *hmc)
 	__be64 *crq_as_u64 = (__be64 *)&crq_msg;
 	int rc = 0;
 
-	dev_info(adapter->dev, "CRQ send: close\n");
-
 	if (!hmc || !hmc->adapter)
 		return -EIO;
 
 	adapter = hmc->adapter;
+
+	dev_info(adapter->dev, "CRQ send: close\n");
 
 	crq_msg.valid = 0x80;
 	crq_msg.type = VMC_MSG_CLOSE;
