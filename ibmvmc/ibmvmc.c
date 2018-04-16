@@ -1801,18 +1801,17 @@ static void ibmvmc_reset(struct crq_server_adapter *adapter, bool xport_event)
 static int ibmvmc_reset_task(void *data)
 {
 	struct crq_server_adapter *adapter = data;
+	int rc;
 
 	set_user_nice(current, -20);
 
 	while (!kthread_should_stop()) {
-		int rc = wait_event_interruptible(adapter->reset_wait_queue,
-				(ibmvmc.state == ibmvmc_state_sched_reset) ||
-				kthread_should_stop());
+		wait_event_interruptible(adapter->reset_wait_queue,
+			(ibmvmc.state == ibmvmc_state_sched_reset) ||
+			kthread_should_stop());
 
 		if (kthread_should_stop())
 			break;
-
-		WARN_ON(rc);
 
 		dev_dbg(adapter->dev, "CRQ resetting in process context");
 		tasklet_disable(&adapter->work_task);
