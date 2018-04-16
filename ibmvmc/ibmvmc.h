@@ -1,20 +1,14 @@
-/*
+/* SPDX-License-Identifier: GPL-2.0+
+ *
+ * linux/drivers/misc/ibmvmc.h
+ *
  * IBM Power Systems Virtual Management Channel Support.
  *
- * Copyright (c) 2004, 2016 IBM Corp.
+ * Copyright (c) 2004, 2018 IBM Corp.
  *   Dave Engebretsen engebret@us.ibm.com
  *   Steven Royer seroyer@linux.vnet.ibm.com
  *   Adam Reznechek adreznec@linux.vnet.ibm.com
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ *   Bryant G. Ly <bryantly@linux.vnet.ibm.com>
  */
 #ifndef IBMVMC_H
 #define IBMVMC_H
@@ -31,7 +25,7 @@
 #define MIN_MTU           4096
 #define MAX_BUF_POOL_SIZE 64
 #define MAX_HMCS          2
-#define MAX_MTU           (4*4096)
+#define MAX_MTU           (4 * 4096)
 #define DEFAULT_BUF_POOL_SIZE 32
 #define DEFAULT_HMCS          1
 #define DEFAULT_MTU           4096
@@ -67,7 +61,6 @@
 #define VMC_BUF_OWNER_ALPHA 0
 #define VMC_BUF_OWNER_HV    1
 
-/* TODO(adreznec) Remove when H_REQUEST_VMC added to hvcall.h */
 #define H_REQUEST_VMC           0x360
 
 enum ibmvmc_states {
@@ -200,7 +193,7 @@ struct ibmvmc_hmc {
 	struct ibmvmc_buffer buffer[MAX_BUF_POOL_SIZE];
 	unsigned short queue_outbound_msgs[MAX_BUF_POOL_SIZE];
 	int queue_head, queue_tail;
-	struct ibmvmc_file_session *pSession;
+	struct ibmvmc_file_session *file_session;
 };
 
 struct ibmvmc_file_session {
@@ -215,4 +208,4 @@ struct ibmvmc_query_struct {
 	int vmc_drc_index;
 };
 
-#endif
+#endif /* __IBMVMC_H */
