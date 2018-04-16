@@ -608,12 +608,12 @@ static int ibmvmc_send_close(struct ibmvmc_hmc *hmc)
 	__be64 *crq_as_u64 = (__be64 *)&crq_msg;
 	int rc = 0;
 
-	dev_info(adapter->dev, "CRQ send: close\n");
-
 	if (!hmc || !hmc->adapter)
 		return -EIO;
 
 	adapter = hmc->adapter;
+
+	dev_info(adapter->dev, "CRQ send: close\n");
 
 	crq_msg.valid = 0x80;
 	crq_msg.type = VMC_MSG_CLOSE;
@@ -935,7 +935,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 
 	adapter = hmc->adapter;
 	if (!adapter) {
-		dev_warn(adapter->dev, "read: no adapter\n");
+		pr_warn("ibmvmc: read: no adapter\n");
 		return -EIO;
 	}
 
@@ -1801,18 +1801,17 @@ static void ibmvmc_reset(struct crq_server_adapter *adapter, bool xport_event)
 static int ibmvmc_reset_task(void *data)
 {
 	struct crq_server_adapter *adapter = data;
+	int rc;
 
 	set_user_nice(current, -20);
 
 	while (!kthread_should_stop()) {
-		int rc = wait_event_interruptible(adapter->reset_wait_queue,
-				(ibmvmc.state == ibmvmc_state_sched_reset) ||
-				kthread_should_stop());
+		wait_event_interruptible(adapter->reset_wait_queue,
+			(ibmvmc.state == ibmvmc_state_sched_reset) ||
+			kthread_should_stop());
 
 		if (kthread_should_stop())
 			break;
-
-		WARN_ON(rc);
 
 		dev_dbg(adapter->dev, "CRQ resetting in process context");
 		tasklet_disable(&adapter->work_task);
@@ -2230,11 +2229,11 @@ static int ibmvmc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	struct crq_server_adapter *adapter = &ibmvmc_adapter;
 	int rc;
 
-	dev_info(adapter->dev, "Probe for UA 0x%x\n", vdev->unit_address);
-
 	dev_set_drvdata(&vdev->dev, NULL);
 	memset(adapter, 0, sizeof(*adapter));
 	adapter->dev = &vdev->dev;
+
+	dev_info(adapter->dev, "Probe for UA 0x%x\n", vdev->unit_address);
 
 	rc = read_dma_window(vdev, adapter);
 	if (rc != 0) {
