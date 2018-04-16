@@ -935,7 +935,7 @@ static ssize_t ibmvmc_read(struct file *file, char *buf, size_t nbytes,
 
 	adapter = hmc->adapter;
 	if (!adapter) {
-		dev_warn(adapter->dev, "read: no adapter\n");
+		pr_warn("ibmvmc: read: no adapter\n");
 		return -EIO;
 	}
 
