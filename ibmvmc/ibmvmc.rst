@@ -1,14 +1,16 @@
-Kernel Driver ibmvmc
-====================
+.. SPDX-License-Identifier: GPL-2.0+
+======================================================
+IBM Virtual Management Channgel Kernel Driver (IBMVMC)
+======================================================
 
-Authors:
-	Dave Engebretsen <engebret@us.ibm.com>
-	Adam Reznechek <adreznec@linux.vnet.ibm.com>
-	Steven Royer <seroyer@linux.vnet.ibm.com>
-	Bryant G. Ly <bryantly@linux.vnet.ibm.com>
+:Authors:
+	Dave Engebretsen <engebret@us.ibm.com>,
+	Adam Reznechek <adreznec@linux.vnet.ibm.com>,
+	Steven Royer <seroyer@linux.vnet.ibm.com>,
+	Bryant G. Ly <bryantly@linux.vnet.ibm.com>,
 
-Description
-===========
+Introduction
+============
 
 The Virtual Management Channel (VMC) is a logical device which provides an
 interface between the hypervisor and a management partition. This
@@ -22,6 +24,9 @@ conventional HMC management of the system may still be provided on a
 system; however, when an HMC is attached to the system, the VMC
 interface is disabled by the hypervisor.
 
+Novalink
+--------
+
 NovaLink runs on a Linux logical partition on a POWER8 or newer processor-
 based server that is virtualized by PowerVM. System configuration,
 maintenance, and control functions which traditionally require an HMC can
@@ -33,30 +38,35 @@ Novalink component are passed to the hypervisor over a VMC interface, which
 is defined below.
 
 Virtual Management Channel (VMC)
+--------------------------------
+
 A logical device, called the virtual management channel (VMC), is defined
 for communicating between the Novalink application and the hypervisor.
 This device, similar to a VSCSI server device, is presented to a designated
 management partition as a virtual device and is only presented when the
 system is not HMC managed.
+
 This communication device borrows aspects from both VSCSI and ILLAN devices
 and is implemented using the CRQ and the RDMA interfaces. A three-way
 handshake is defined that must take place to establish that both the
 hypervisor and management partition sides of the channel are running prior
 to sending/receiving any of the protocol messages.
-This driver also utilizes Transport Event CRQs. CRQ messages that are sent
+
+This driver also utilizes Transport Event CRQs. CRQ messages are sent
 when the hypervisor detects one of the peer partitions has abnormally
 terminated, or one side has called H_FREE_CRQ to close their CRQ.
 Two new classes of CRQ messages are introduced for the VMC device. VMC
 Administrative messages are used for each partition using the VMC to
 communicate capabilities to their partner. HMC Interface messages are used
 for the actual flow of HMC messages between the management partition and
-the hypervisor. As most HMC messages far exceed the size of a CRQ bugger,
+the hypervisor. As most HMC messages far exceed the size of a CRQ buffer,
 a virtual DMA (RMDA) of the HMC message data is done prior to each HMC
 Interface CRQ message. Only the management partition drives RDMA
 operations; hypervisors never directly causes the movement of message data.
 
 Example Management Partition VMC Driver Interface
 =================================================
+
 This section provides an example for the Novalink implementation where a
 device driver is used to interface to the VMC device. This driver
 consists of a new device, for example /dev/lparvmc, which provides
@@ -64,6 +74,8 @@ interfaces to open, close, read, write, and perform ioctl’s against the
 VMC device.
 
 VMC Interface Initialization
+----------------------------
+
 The device driver is responsible for initializing the VMC when the driver
 is loaded. It first creates and initializes the CRQ. Next, an exchange of
 VMC capabilities is performed to indicate the code version and number of
@@ -74,21 +86,25 @@ which will be used for Novalink session initialization. Prior to completion
 of this initialization sequence, the device returns EBUSY to open() calls.
 EIO is returned for all open() failures.
 
-Management Partition		Hypervisor
-		CRQ INIT
----------------------------------------->
-	   CRQ INIT COMPLETE
-<----------------------------------------
-	      CAPABILITIES
----------------------------------------->
-	 CAPABILITIES RESPONSE
-<----------------------------------------
-      ADD BUFFER (MHC IDX=0,1,..)	  _
-<----------------------------------------  |
-	  ADD BUFFER RESPONSE		   | - Perform # HMCs Iterations
-----------------------------------------> -
+::
+
+        Management Partition		Hypervisor
+	        	CRQ INIT
+        ---------------------------------------->
+        	   CRQ INIT COMPLETE
+        <----------------------------------------
+        	      CAPABILITIES
+        ---------------------------------------->
+        	 CAPABILITIES RESPONSE
+        <----------------------------------------
+              ADD BUFFER (MHC IDX=0,1,..)         _
+        <----------------------------------------  |
+        	  ADD BUFFER RESPONSE              | - Perform # HMCs Iterations
+        ----------------------------------------> -
 
 VMC Interface Open
+------------------
+
 After the basic VMC channel has been initialized, an HMC session level
 connection can be established. The application layer performs an open() to
 the VMC device and executes an ioctl() against it, indicating the HMC ID
@@ -104,19 +120,23 @@ buffers for the new HMC connection. Finally, the hypervisor sends an
 Interface Open Response message, to indicate that it is ready for normal
 runtime messaging. The following illustrates this VMC flow:
 
-Management Partition             Hypervisor
-	      RDMA HMC ID
----------------------------------------->
-	    Interface Open
----------------------------------------->
-	      Add Buffer		  _
-<----------------------------------------  |
-	  Add Buffer Response		   | - Perform N Iterations
-----------------------------------------> -
-	Interface Open Response
-<----------------------------------------
+::
+
+        Management Partition             Hypervisor
+        	      RDMA HMC ID
+        ---------------------------------------->
+        	    Interface Open
+        ---------------------------------------->
+        	      Add Buffer                  _
+        <----------------------------------------  |
+        	  Add Buffer Response              | - Perform N Iterations
+        ----------------------------------------> -
+        	Interface Open Response
+        <----------------------------------------
 
 VMC Interface Runtime
+---------------------
+
 During normal runtime, the Novalink application and the hypervisor
 exchange HMC messages via the Signal VMC message and RDMA operations. When
 sending data to the hypervisor, the Novalink application performs a
@@ -133,28 +153,37 @@ read() to the VMC device. The read() request blocks if there is no buffer
 available to read. The Novalink application may use select() to wait for
 the VMC device to become ready with data to read.
 
-Management Partition             Hypervisor
-		MSG RDMA
----------------------------------------->
-		SIGNAL MSG
----------------------------------------->
-		SIGNAL MSG
-<----------------------------------------
-		MSG RDMA
-<----------------------------------------
+::
+
+        Management Partition             Hypervisor
+        		MSG RDMA
+        ---------------------------------------->
+        		SIGNAL MSG
+        ---------------------------------------->
+        		SIGNAL MSG
+        <----------------------------------------
+        		MSG RDMA
+        <----------------------------------------
 
 VMC Interface Close
+-------------------
+
 HMC session level connections are closed by the management partition when
 the application layer performs a close() against the device. This action
 results in an Interface Close message flowing to the hypervisor, which
 causes the session to be terminated. The device driver must free any
 storage allocated for buffers for this HMC connection.
 
-Management Partition             Hypervisor
-	     INTERFACE CLOSE
----------------------------------------->
-        INTERFACE CLOSE RESPONSE
-<----------------------------------------
+::
+
+        Management Partition             Hypervisor
+        	     INTERFACE CLOSE
+        ---------------------------------------->
+                INTERFACE CLOSE RESPONSE
+        <----------------------------------------
+
+Additional Information
+======================
 
 For more information on the documentation for CRQ Messages, VMC Messages,
 HMC interface Buffers, and signal messages please refer to the Linux on
