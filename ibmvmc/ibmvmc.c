@@ -241,7 +241,7 @@ static long ibmvmc_send_crq(struct crq_server_adapter *adapter,
 			    u64 word1, u64 word2)
 {
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
-	long rc;
+	long rc = 0;
 
 	dev_dbg(adapter->dev, "(0x%x, 0x%016llx, 0x%016llx)\n",
 		vdev->unit_address, word1, word2);
@@ -2108,8 +2108,8 @@ static int ibmvmc_init_crq_queue(struct crq_server_adapter *adapter)
 {
 	struct vio_dev *vdev = to_vio_dev(adapter->dev);
 	struct crq_queue *queue = &adapter->queue;
-	int rc;
-	int retrc;
+	int rc = 0;
+	int retrc = 0;
 
 	queue->msgs = (struct ibmvmc_crq_msg *)get_zeroed_page(GFP_KERNEL);
 
