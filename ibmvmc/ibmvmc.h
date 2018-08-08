@@ -24,10 +24,10 @@
 #define MIN_HMCS          1
 #define MIN_MTU           4096
 #define MAX_BUF_POOL_SIZE 64
-#define MAX_HMCS          2
+#define MAX_HMCS          4
 #define MAX_MTU           (4 * 4096)
 #define DEFAULT_BUF_POOL_SIZE 32
-#define DEFAULT_HMCS          1
+#define DEFAULT_HMCS          3
 #define DEFAULT_MTU           4096
 #define HMC_ID_LEN        32
 
